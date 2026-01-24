@@ -1,0 +1,1927 @@
+const API_ENDPOINT = "https://chatbot-api.yama5993.workers.dev/";
+const ASSET_VERSION = "1.0.15"; // ?ì…‹ ìºì‹œ ë°©ì?ë¥??„í•œ ë²„ì „ ë²ˆí˜¸
+
+// ?ì…‹ URL??ë²„ì „??ì¶”ê??˜ëŠ” ?¬í¼ ?¨ìˆ˜
+function getAssetUrl(url) {
+    if (!url) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${ASSET_VERSION}`;
+}
+
+let currentSceneId = "start";
+let lastBgUrl = ""; // ë§ˆì?ë§‰ìœ¼ë¡??¤ì •??ë°°ê²½ ?´ë?ì§€ URL
+let isTyping = false;
+let skipTyping = false;
+
+// ?¸ê°??ë³€??? ë‹ˆë©”ì´???¨ìˆ˜
+function showAffinityChange(amount, charName = null) {
+    if (amount === 0) return;
+    
+    const popup = document.createElement('div');
+    popup.className = `affinity-popup ${amount > 0 ? 'positive' : 'negative'}`;
+    
+    const emoji = document.createElement('span');
+    emoji.className = 'emoji';
+    emoji.textContent = amount > 0 ? '?’•' : '?’”';
+    
+    const value = document.createElement('span');
+    value.className = 'value';
+    value.textContent = amount > 0 ? `+${amount}` : `${amount}`;
+    
+    popup.appendChild(emoji);
+    popup.appendChild(value);
+    document.body.appendChild(popup);
+    
+    // ? ë‹ˆë©”ì´???„ë£Œ ???œê±°
+    setTimeout(() => {
+        popup.remove();
+    }, 5000);
+}
+
+let gameState = {
+    playerName: "ì£¼ì¸ê³?, // ê¸°ë³¸ ?´ë¦„
+    currentDay: 1, // ?„ì¬ ì§„í–‰ ì¤‘ì¸ ? ì§œ
+    stats: {
+        Seoyeon: { affinity: 0 },
+        Yuna: { affinity: 0 },
+        Dain: { affinity: 0 },
+        Teacher: { affinity: 0 },
+        Nurse: { affinity: 0 }
+    },
+    chatMemories: {} // ìºë¦­?°ë³„ ?€??ê¸°ë¡ ?€??
+};
+
+// ==========================================================================
+// ê²Œì„ ?€??ë¡œë“œ ?œìŠ¤??(Game Save/Load System)
+// ==========================================================================
+
+const SAVE_STORAGE_KEY = 'eros_save';
+
+/**
+ * ?„ì¬ ê²Œì„ ?íƒœë¥?localStorage???€??
+ */
+function saveGameState() {
+    // ?„ì¬ ?œì‹œ??ìºë¦­???•ë³´ ?˜ì§‘
+    const charSlots = {
+        left: document.getElementById('char-left'),
+        center: document.getElementById('char-center'),
+        right: document.getElementById('char-right')
+    };
+    const currentCharacters = {};
+    for (const [slot, el] of Object.entries(charSlots)) {
+        const img = el?.querySelector('img');
+        if (img && img.src) {
+            currentCharacters[slot] = img.src;
+        }
+    }
+    
+    const saveData = {
+        currentSceneId: currentSceneId,
+        lastBgUrl: lastBgUrl,
+        currentCharacters: currentCharacters,
+        gameState: JSON.parse(JSON.stringify(gameState)), // deep copy
+        savedAt: Date.now()
+    };
+    localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(saveData));
+    console.log('[Save] ê²Œì„ ?íƒœ ?€???„ë£Œ:', currentSceneId);
+}
+
+/**
+ * ?€?¥ëœ ê²Œì„ ?íƒœ ë¡œë“œ
+ * @returns {Object|null} ?€?¥ëœ ?°ì´???ëŠ” null
+ */
+function loadGameState() {
+    const saved = localStorage.getItem(SAVE_STORAGE_KEY);
+    if (!saved) return null;
+    try {
+        return JSON.parse(saved);
+    } catch (e) {
+        console.error('[Load] ?€???°ì´???Œì‹± ?¤ë¥˜:', e);
+        return null;
+    }
+}
+
+/**
+ * ?€?¥ëœ ê²Œì„???ˆëŠ”ì§€ ?•ì¸
+ * @returns {boolean}
+ */
+function hasSavedGame() {
+    return localStorage.getItem(SAVE_STORAGE_KEY) !== null;
+}
+
+/**
+ * ?€?¥ëœ ê²Œì„ ?? œ
+ */
+function clearSavedGame() {
+    localStorage.removeItem(SAVE_STORAGE_KEY);
+    console.log('[Save] ?€???°ì´???? œ??);
+}
+
+// ?„ì—­ ?¸ì¶œ
+window.saveGameState = saveGameState;
+window.loadGameState = loadGameState;
+window.hasSavedGame = hasSavedGame;
+window.clearSavedGame = clearSavedGame;
+
+// ==========================================================================
+// ê°¤ëŸ¬ë¦??´ê¸ˆ ?œìŠ¤??(Gallery Unlock System)
+// ==========================================================================
+
+// ê°¤ëŸ¬ë¦?ì§„í–‰ ?í™© ?€????
+const GALLERY_STORAGE_KEY = 'eros_gallery';
+const GALLERY_DATA_VERSION = 2;
+
+// ê°¤ëŸ¬ë¦?ì§„í–‰ ?í™© ì´ˆê¸°??ë¡œë“œ
+function getGalleryProgress() {
+    const saved = localStorage.getItem(GALLERY_STORAGE_KEY);
+    if (!saved) {
+        return {
+            version: GALLERY_DATA_VERSION,
+            characters: {},
+            cg: {},
+            bgm: { intro: { unlocked: true } } // intro BGM?€ ê¸°ë³¸ ?´ê¸ˆ
+        };
+    }
+    const data = JSON.parse(saved);
+    // ë²„ì „???†ìœ¼ë©?ì¶”ê?
+    if (!data.version) {
+        data.version = GALLERY_DATA_VERSION;
+    }
+    return data;
+}
+
+// ê°¤ëŸ¬ë¦?ì§„í–‰ ?í™© ?€??
+function saveGalleryProgress(progress) {
+    localStorage.setItem(GALLERY_STORAGE_KEY, JSON.stringify(progress));
+}
+
+// ìµœë? ?¸ê°???…ë°?´íŠ¸ (?œì • ?´ê¸ˆ??
+function updateMaxAffinity(charKey, currentAffinity) {
+    const progress = getGalleryProgress();
+    const charIdMap = {
+        'Seoyeon': 'seyoun',
+        'Yuna': 'yuna',
+        'Dain': 'dain',
+        'Teacher': 'teacher',
+        'Nurse': 'nurse'
+    };
+    const charId = charIdMap[charKey];
+    if (charId) {
+        if (!progress.characters[charId]) {
+            progress.characters[charId] = {};
+        }
+        const currentMax = progress.characters[charId].maxAffinity || 0;
+        if (currentAffinity > currentMax) {
+            progress.characters[charId].maxAffinity = currentAffinity;
+            saveGalleryProgress(progress);
+            console.log(`[Gallery] Max affinity updated for ${charId}: ${currentAffinity}`);
+        }
+    }
+}
+
+// ìºë¦­???´ê¸ˆ (?¸ê°??100 ?¬ì„± ??
+function unlockCharacterGallery(charKey) {
+    const progress = getGalleryProgress();
+    const charIdMap = {
+        'Seoyeon': 'seyoun',
+        'Yuna': 'yuna',
+        'Dain': 'dain',
+        'Teacher': 'teacher',
+        'Nurse': 'nurse'
+    };
+    const charId = charIdMap[charKey];
+    if (charId && !progress.characters[charId]?.unlocked) {
+        if (!progress.characters[charId]) {
+            progress.characters[charId] = { met: true };
+        }
+        progress.characters[charId].unlocked = true;
+        progress.characters[charId].unlockedAt = Date.now();
+        saveGalleryProgress(progress);
+        console.log(`[Gallery] Character unlocked: ${charId}`);
+    }
+}
+
+// ìºë¦­?°ë? ë§Œë‚¬????ê¸°ë¡ (ê°¤ëŸ¬ë¦?ì¹´ë“œ ?œì‹œ??
+function markCharacterMet(charKey) {
+    const progress = getGalleryProgress();
+    const charIdMap = {
+        'Seoyeon': 'seyoun',
+        'Yuna': 'yuna',
+        'Dain': 'dain',
+        'Teacher': 'teacher',
+        'Nurse': 'nurse',
+        '?œì—°': 'seyoun',
+        '? ë‚˜': 'yuna',
+        '?¤ì¸': 'dain',
+        '?´ì„? ìƒ??: 'teacher',
+        'ë³´ê±´? ìƒ??: 'nurse'
+    };
+    const charId = charIdMap[charKey];
+    if (charId && !progress.characters[charId]?.met) {
+        if (!progress.characters[charId]) {
+            progress.characters[charId] = {};
+        }
+        progress.characters[charId].met = true;
+        progress.characters[charId].metAt = Date.now();
+        saveGalleryProgress(progress);
+        console.log(`[Gallery] Character met: ${charId}`);
+    }
+}
+
+// CG ?´ê¸ˆ (ê°¤ëŸ¬ë¦¬ì— ?±ë¡??CGë§??´ê¸ˆ)
+// ?±ë¡??CG ëª©ë¡ (gallery.js??GALLERY_CG?€ ?™ê¸°???„ìš”)
+const REGISTERED_CG_IDS = new Set([
+    'nurse_home_event1'
+    // ??CG ì¶”ê? ???¬ê¸°?ë„ ID ì¶”ê?
+]);
+
+function unlockCG(cgId) {
+    // ?±ë¡??CGê°€ ?„ë‹ˆë©?ë¬´ì‹œ
+    if (!REGISTERED_CG_IDS.has(cgId)) return;
+    
+    const progress = getGalleryProgress();
+    if (!progress.cg[cgId]?.unlocked) {
+        progress.cg[cgId] = { unlocked: true, unlockedAt: Date.now() };
+        saveGalleryProgress(progress);
+        console.log(`[Gallery] CG unlocked: ${cgId}`);
+    }
+}
+
+// BGM ?´ê¸ˆ
+function unlockBGM(bgmId) {
+    const progress = getGalleryProgress();
+    if (!progress.bgm[bgmId]?.unlocked) {
+        progress.bgm[bgmId] = { unlocked: true, unlockedAt: Date.now() };
+        saveGalleryProgress(progress);
+        console.log(`[Gallery] BGM unlocked: ${bgmId}`);
+    }
+}
+
+// ?¸ê°??ì²´í¬ ë°?ìºë¦­???´ê¸ˆ
+function checkAffinityUnlock(charKey) {
+    const affinity = gameState.stats[charKey]?.affinity || 0;
+    if (affinity >= 100) {
+        unlockCharacterGallery(charKey);
+    }
+}
+
+// ìºë¦­?°ë³„ ?„ë¦¬? í‚¹ ?Ÿìˆ˜ ì¦ê?
+function incrementFreeTalkCount(charKey) {
+    const progress = getGalleryProgress();
+    const charIdMap = {
+        'Seoyeon': 'seyoun',
+        'Yuna': 'yuna',
+        'Dain': 'dain',
+        'Teacher': 'teacher',
+        'Nurse': 'nurse'
+    };
+    const charId = charIdMap[charKey];
+    if (charId) {
+        if (!progress.characters[charId]) {
+            progress.characters[charId] = {};
+        }
+        progress.characters[charId].freeTalkCount = (progress.characters[charId].freeTalkCount || 0) + 1;
+        saveGalleryProgress(progress);
+        console.log(`[Gallery] FreeTalk count for ${charId}: ${progress.characters[charId].freeTalkCount}`);
+    }
+}
+
+// ?„ë¦¬? í‚¹ ê´€??ë³€??
+let freeTalkTurns = 0;
+let currentMaxTurns = 3;
+const DEFAULT_MAX_FREE_TALK_TURNS = 3;
+let freeTalkHistory = [];
+let isFreeTalking = false;
+
+const messageEl = document.getElementById('message');
+const nameTagEl = document.getElementById('name-tag');
+const dialogueBox = document.getElementById('dialogue-box');
+const choiceContainer = document.getElementById('choice-container');
+const chatContainer = document.getElementById('chat-container');
+const chatInput = document.getElementById('chat-input');
+const chatSendBtn = document.getElementById('chat-send');
+const chatSkipBtn = document.getElementById('chat-skip-btn');
+const turnCountEl = document.getElementById('turn-count');
+const nameInputContainer = document.getElementById('name-input-container');
+const playerNameInput = document.getElementById('player-name-input');
+const nameConfirmBtn = document.getElementById('name-confirm-btn');
+const bgLayer = document.getElementById('background-layer');
+const charSlots = {
+    left: document.getElementById('char-left'),
+    center: document.getElementById('char-center'),
+    right: document.getElementById('char-right')
+};
+const fadeLayer = document.getElementById('fade-layer');
+const tbcText = document.getElementById('tbc-text');
+const nextIndicator = document.getElementById('next-indicator');
+
+// ì»¤ìŠ¤?€ ëª¨ë‹¬ ?”ì†Œ
+const customModal = document.getElementById('custom-modal');
+const modalMessage = document.getElementById('modal-message');
+const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+const modalCancelBtn = document.getElementById('modal-cancel-btn');
+
+// ??ë²„íŠ¼ ê´€???¨ìˆ˜
+function showHomeConfirm() {
+    const homeModal = document.getElementById('homeConfirmModal');
+    if (homeModal) {
+        homeModal.style.display = 'flex';
+    }
+}
+
+function closeHomeConfirm(e) {
+    if (e && e.target !== e.currentTarget && e.target.id !== 'homeConfirmModal') return;
+    const homeModal = document.getElementById('homeConfirmModal');
+    if (homeModal) {
+        homeModal.style.display = 'none';
+    }
+}
+
+function goToHome() {
+    // BGM ?•ì?
+    if (window.soundManager) {
+        soundManager.stopBgm();
+    }
+    // ?œì‘ ?”ë©´?¼ë¡œ ?´ë™
+    const isEn = document.documentElement.lang === 'en';
+    window.location.href = isEn ? 'index-en.html' : 'index.html';
+}
+
+// ?¤ì • ëª¨ë‹¬ ê´€???¨ìˆ˜
+function openSettingsModal() {
+    const settingsModal = document.getElementById('settingsModal');
+    if (!settingsModal) return;
+    
+    settingsModal.style.display = 'flex';
+    
+    const savedSetting = localStorage.getItem('showAffinity');
+    const showAffinity = savedSetting === null ? true : savedSetting === 'true';
+    document.getElementById('affinityToggle').checked = showAffinity;
+
+    const bgmVol = localStorage.getItem('bgmVolume') || 0.5;
+    const sfxVol = localStorage.getItem('sfxVolume') || 0.5;
+    
+    document.getElementById('bgmVolume').value = bgmVol * 100;
+    document.getElementById('sfxVolume').value = sfxVol * 100;
+    document.getElementById('bgmVolumeVal').textContent = Math.round(bgmVol * 100) + '%';
+    document.getElementById('sfxVolumeVal').textContent = Math.round(sfxVol * 100) + '%';
+}
+
+function closeSettingsModal(e) {
+    if (e && e.target !== e.currentTarget && e.target.id !== 'settingsModal') return;
+    document.getElementById('settingsModal').style.display = 'none';
+}
+
+function saveSettings() {
+    const showAffinity = document.getElementById('affinityToggle').checked;
+    localStorage.setItem('showAffinity', showAffinity);
+    
+    const bgmVol = document.getElementById('bgmVolume').value / 100;
+    const sfxVol = document.getElementById('sfxVolume').value / 100;
+    
+    if (window.soundManager) {
+        soundManager.setBgmVolume(bgmVol);
+        soundManager.setSfxVolume(sfxVol);
+    }
+    
+    closeSettingsModal();
+    // ?¸ê°???œì‹œ ?¤ì • ë³€ê²???ì¦‰ì‹œ ë°˜ì˜???„í•´ ?„ì¬ ???¤ì‹œ ?Œë”ë§í•˜ê±°ë‚˜ ?œê·¸ ?…ë°?´íŠ¸
+    const scene = getScene(currentSceneId);
+    if (scene) updateNameTag(scene.name);
+}
+
+// ë³¼ë¥¨ ë³€ê²??¤ì‹œê°?ë°˜ì˜
+window.addEventListener('input', (e) => {
+    if (e.target.id === 'bgmVolume') {
+        const vol = e.target.value / 100;
+        document.getElementById('bgmVolumeVal').textContent = e.target.value + '%';
+        if (window.soundManager) soundManager.setBgmVolume(vol);
+    } else if (e.target.id === 'sfxVolume') {
+        const vol = e.target.value / 100;
+        document.getElementById('sfxVolumeVal').textContent = e.target.value + '%';
+        if (window.soundManager) soundManager.setSfxVolume(vol);
+    }
+});
+
+// ?œë‚˜ë¦¬ì˜¤ ?°ì´??ê°€?¸ì˜¤ê¸??¬í¼ ?¨ìˆ˜
+function getScene(id) {
+    if (!id) return null;
+
+    // ?„ì¬ ? ì§œ???œë‚˜ë¦¬ì˜¤?ì„œ ë¨¼ì? ê²€??
+    if (SCENARIO[gameState.currentDay] && SCENARIO[gameState.currentDay][id]) {
+        return SCENARIO[gameState.currentDay][id];
+    }
+
+    // ëª¨ë“  ? ì§œë¥??œíšŒ?˜ë©° ê²€??(? ì§œ ë³€ê²??œì ??? ì—°?±ì„ ?„í•´)
+    for (const day in SCENARIO) {
+        if (SCENARIO[day] && SCENARIO[day][id]) {
+            return SCENARIO[day][id];
+        }
+    }
+
+    // ê³µí†µ ?œë‚˜ë¦¬ì˜¤(0)?ì„œ ê²€??
+    if (SCENARIO[0] && SCENARIO[0][id]) {
+        return SCENARIO[0][id];
+    }
+
+    // ?˜ìœ„ ?¸í™˜?±ì„ ?„í•´ ë£¨íŠ¸ ?ˆë²¨?ì„œ??ê²€??(ê¸°ì¡´ êµ¬ì¡° ?€??
+    if (SCENARIO[id]) {
+        return SCENARIO[id];
+    }
+
+    return null;
+}
+
+/**
+ * ?´ë¦„ ?œê·¸ ë°??¸ê°??ê²Œì´ì§€ ?…ë°?´íŠ¸
+ * @param {string} name ìºë¦­???´ë¦„
+ */
+/**
+ * [ìºë¦­???€ì§ì„ ê´€ë¦? ?„ì¬ ë§í•˜ê³??ˆëŠ” ìºë¦­?°ë? ì°¾ì•„ ?¤ì©ê±°ë¦¬???¨ê³¼ë¥?ì¤?
+ * @param {string} charName - ì§€ê¸??€?¬ë? ?˜ê³  ?ˆëŠ” ìºë¦­???´ë¦„
+ * @param {boolean} isStarting - ?€ì§ì„???œì‘? ì?(true), ë©ˆì¶œì§€(false) ê²°ì •
+ */
+function updateTalkingAnimation(charName, isStarting) {
+    // [?¤ì •] ì£¼ì¸ê³?"??)??ë§í•˜ê±°ë‚˜ ?œìŠ¤??ë©”ì‹œì§€ê°€ ?˜ì˜¬ ?ŒëŠ” ìºë¦­???€ì§ì„??ë©ˆì¶¤
+    if (!charName || charName === "?? || charName === "Me" || charName === "?œìŠ¤?? || charName === "System") {
+        // ëª¨ë“  ìºë¦­??ì¹?slot)???˜ë‚˜???•ì¸
+        Object.values(charSlots).forEach(slot => {
+            if (!slot) return;
+            // ì¹??ˆì— ?¤ì–´?ˆëŠ” ìºë¦­???´ë?ì§€(img)ë¥?ëª¨ë‘ ì°¾ìŒ
+            const imgs = slot.querySelectorAll('img');
+            // 'char-talking'(ë§í•˜??ì¤? ?´ë˜?¤ë? ?œê±°?˜ì—¬ ?€ì§ì„??ë©ˆì¶¤
+            imgs.forEach(img => img.classList.remove('char-talking'));
+        });
+        return; // ?¨ìˆ˜ ì¢…ë£Œ
+    }
+    
+    // [ë§¤ì¹­ ?œë¹„?? ?”ë©´ ?´ë¦„ê³??¤ì œ ?´ë?ì§€ ?Œì¼ ?´ë¦„???°ê²°?˜ëŠ” ?¬ì „
+    // ?ˆë¡œ??ìºë¦­??ì¶”ê? ???¬ê¸°??"?´ë¦„": "?Œì¼?´ë¦„" ?•ì‹?¼ë¡œ ì¶”ê??˜ë©´ ??
+    const charNameMap = {
+        "?œì—°": "seyoun", "? ë‚˜": "yuna", "?¤ì¸": "dain", 
+        "?´ì„? ìƒ??: "teacher", "ë³´ê±´? ìƒ??: "nurse",
+        "Seoyeon": "seyoun", "Yuna": "yuna", "Dain": "dain",
+        "???": "seyoun" // ?´ë¦„??'???'???Œë„ ?œì—°???´ë?ì§€ê°€ ?€ì§ì´ê²??¤ì •
+    };
+    
+    // ?„ì¬ ?”ì ?´ë¦„???Œì¼ ?´ë¦„ ?¤ì›Œ???? seyoun)ë¡?ë³€??
+    const targetKey = charNameMap[charName] || charName.toLowerCase();
+    
+    // ?”ë©´?ì˜ ëª¨ë“  ìºë¦­?°ë? ?˜ë‚˜??ê²€??
+    Object.values(charSlots).forEach(slot => {
+        if (!slot) return;
+        const imgs = slot.querySelectorAll('img');
+        imgs.forEach(img => {
+            const src = img.src.toLowerCase(); // ?´ë?ì§€ ?Œì¼ ê²½ë¡œ ?ë“
+            
+            // ?´ë?ì§€ ?Œì¼ ?´ë¦„???„ì¬ ?”ì ?´ë¦„(?? seyoun)???ˆëŠ”ì§€ ?•ì¸
+            if (src.includes(targetKey)) {
+                if (isStarting) {
+                    // ë§í•˜ê¸??œì‘ ??'char-talking' ?´ë˜??ì¶”ê??˜ì—¬ ?¤ì©?´ê²Œ ??
+                    img.classList.add('char-talking');
+                } else {
+                    // ë§ì´ ?ë‚˜ë©??´ë˜???œê±°?˜ì—¬ ?•ì??œí‚´
+                    img.classList.remove('char-talking');
+                }
+            } else {
+                // ?„ì¬ ?”ìê°€ ?„ë‹Œ ìºë¦­?°ë“¤?€ ?„ë? ?€ì§ì„??ë©ˆì¶¤
+                img.classList.remove('char-talking');
+            }
+        });
+    });
+}
+
+function updateNameTag(name) {
+    nameTagEl.innerHTML = "";
+    if (!name) {
+        nameTagEl.style.display = 'none';
+        return;
+    }
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = name;
+    nameTagEl.appendChild(nameSpan);
+
+    // ìºë¦­?°ë? ë§Œë‚¬?Œì„ ê¸°ë¡ (ê°¤ëŸ¬ë¦¬ìš©)
+    markCharacterMet(name);
+
+    // ?¸ê°??ê²Œì´ì§€ ?œì‹œ (?¤ì • ?•ì¸, ê¸°ë³¸ê°?true)
+    const showAffinity = localStorage.getItem('showAffinity') !== 'false';
+
+    if (showAffinity) {
+        const charNameMap = {
+            "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+            "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Teacher": "Teacher", "Nurse": "Nurse"
+        };
+        const charKey = charNameMap[name];
+
+        if (charKey && gameState.stats[charKey]) {
+            const affinity = gameState.stats[charKey].affinity || 0;
+            
+            // ê²Œì´ì§€ ì»¨í…Œ?´ë„ˆ
+            const gaugeBox = document.createElement('span');
+            gaugeBox.style.display = 'inline-flex';
+            gaugeBox.style.alignItems = 'center';
+            gaugeBox.style.marginLeft = '15px'; // ë§ˆì§„ ì¦ê?
+            gaugeBox.style.paddingLeft = '10px';
+            gaugeBox.style.borderLeft = '1px solid rgba(255, 255, 255, 0.3)';
+            gaugeBox.style.verticalAlign = 'middle';
+
+            // ?«ì ?œì‹œ
+            const valText = document.createElement('span');
+            valText.textContent = (affinity > 0 ? "+" : "") + affinity;
+            valText.style.fontSize = '0.8rem';
+            valText.style.marginRight = '8px';
+            valText.style.minWidth = '30px';
+            valText.style.textAlign = 'right';
+            valText.style.color = '#fff'; // ê°€?…ì„±???„í•´ ?°ìƒ‰?¼ë¡œ ê³ ì •?˜ê±°??ë°°ê²½?‰ì— ë§ì¶¤
+            valText.style.textShadow = '1px 1px 2px rgba(0,0,0,0.5)';
+
+            // ê²Œì´ì§€ ?¸ë™
+            const track = document.createElement('span');
+            track.style.display = 'inline-block';
+            track.style.width = '80px';
+            track.style.height = '6px';
+            track.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+            track.style.borderRadius = '3px';
+            track.style.position = 'relative';
+            track.style.overflow = 'hidden';
+            track.style.border = '1px solid rgba(0, 0, 0, 0.4)';
+
+            // ê²Œì´ì§€ ë°?
+            const bar = document.createElement('span');
+            bar.style.position = 'absolute';
+            bar.style.height = '100%';
+            bar.style.top = '0';
+            
+            // -100 (0%) ~ 100 (100%)
+            const percent = (affinity + 100) / 2;
+            bar.style.width = percent + '%';
+            bar.style.left = '0';
+            
+            // ?‰ìƒ ê²°ì •
+            if (affinity >= 70) bar.style.backgroundColor = '#ff7675'; // ?¸ê°
+            else if (affinity >= 0) bar.style.backgroundColor = '#fab1a0'; // ?°í˜¸
+            else if (affinity > -40) bar.style.backgroundColor = '#81ecec'; // ë¶ˆì¾Œ
+            else bar.style.backgroundColor = '#74b9ff'; // ?ì˜¤
+
+            track.appendChild(bar);
+            
+            // ì¤‘ì•™??(0??ê¸°ì???
+            const mid = document.createElement('span');
+            mid.style.position = 'absolute';
+            mid.style.left = '50%';
+            mid.style.top = '0';
+            mid.style.width = '1px';
+            mid.style.height = '100%';
+            mid.style.backgroundColor = 'rgba(255, 255, 255, 0.5)';
+            track.appendChild(mid);
+
+            gaugeBox.appendChild(valText);
+            gaugeBox.appendChild(track);
+            nameTagEl.appendChild(gaugeBox);
+        }
+    }
+    nameTagEl.style.display = 'block';
+}
+
+// ?¤ìŒ ?¥ë©´ IDë¥?ê²°ì •?˜ëŠ” ?¬í¼ ?¨ìˆ˜ (ë¶„ê¸° ë¡œì§ ì²˜ë¦¬)
+function resolveNextScene(scene) {
+    if (!scene) return null;
+
+    // ?¸ê°?„ì— ?°ë¥¸ ê²°ê³¼ ë¶„ê¸° ì²˜ë¦¬ (affinityBranchesê°€ ?ˆëŠ” ê²½ìš°)
+    if (scene.affinityBranches && scene.affinityChar && gameState.stats[scene.affinityChar]) {
+        const currentAff = gameState.stats[scene.affinityChar].affinity;
+        // ?’ì? ë¬¸í„±ë¶€??ì²´í¬?˜ì—¬ ì¡°ê±´??ë§ëŠ” ê°€???’ì? ë¶„ê¸°ë¥?? íƒ
+        const sortedBranches = [...scene.affinityBranches].sort((a, b) => b.minAffinity - a.minAffinity);
+        for (const branch of sortedBranches) {
+            if (currentAff >= branch.minAffinity) {
+                return branch.next;
+            }
+        }
+    }
+
+    // branchesê°€ ?ˆëŠ” ê²½ìš°
+    if (scene.branches && Array.isArray(scene.branches)) {
+        // ?¸ê°??ë¹„êµ ë¶„ê¸° ì²˜ë¦¬ (selectByHighestAffinity: true ??ê²½ìš°)
+        if (scene.selectByHighestAffinity) {
+            let winnerNext = null;
+            let maxAffinity = -999;
+            let metAnyone = false;
+
+            for (const branch of scene.branches) {
+                // ë§Œë‚œ ?ì´ ?ˆëŠ” ìºë¦­?°ì¸ì§€ ë¨¼ì? ?•ì¸ (metSeoyeon, metDain ??
+                const metFlag = "met" + branch.character;
+                if (gameState[metFlag] && branch.character && gameState.stats[branch.character]) {
+                    metAnyone = true;
+                    const currentAff = gameState.stats[branch.character].affinity;
+                    if (currentAff > maxAffinity) {
+                        maxAffinity = currentAff;
+                        winnerNext = branch.next;
+                    }
+                }
+            }
+            // ë§Œë‚œ ?ì´ ?ˆëŠ” ìºë¦­?°ê? ?ˆë‹¤ë©?ê·¸ì¤‘ ìµœê³  ?¸ê°??ë°˜í™˜
+            if (metAnyone) return winnerNext;
+        }
+
+        // ?¼ë°˜?ì¸ ì¡°ê±´ë¶€ ë¶„ê¸° ì²˜ë¦¬ (?ëŠ” ë§Œë‚œ ?¬ëŒ???„ë¬´???†ëŠ” ê²½ìš°)
+        for (const branch of scene.branches) {
+            if (branch.condition && !gameState[branch.condition]) continue;
+            if (branch.excludeCondition && gameState[branch.excludeCondition]) continue;
+            return branch.next;
+        }
+    }
+
+    // ê¸°ë³¸ next ë°˜í™˜
+    return scene.next;
+}
+
+async function renderScene(sceneId) {
+    const scene = getScene(sceneId);
+    if (!scene) {
+        // ë§Œì•½ sceneIdê°€ .htmlë¡??ë‚˜ë©??˜ì´ì§€ ?´ë™ (?€?´í?ë¡??Œì•„ê°€ê¸???
+        if (sceneId && sceneId.endsWith('.html')) {
+            window.location.href = sceneId;
+        }
+        return;
+    }
+
+    currentSceneId = sceneId;
+
+    // BGM ?…ë°?´íŠ¸
+    if (scene.bgm) {
+        soundManager.playBgm(`assets/audio/bgm/${scene.bgm}`);
+    } else if (scene.bgm === null) {
+        soundManager.stopBgm();
+    }
+
+    // SFX ?¬ìƒ
+    if (scene.sfx) {
+        soundManager.playSfx(`assets/audio/sfx/${scene.sfx}`);
+    }
+
+    // ? ì§œ ë³€ê²?ì²˜ë¦¬
+    if (scene.changeDay) {
+        gameState.currentDay = scene.changeDay;
+        console.log(`Day changed to: ${gameState.currentDay}`);
+    }
+
+    // ?€?”ì°½ ë°?? íƒì§€ ì´ˆê¸°??
+    dialogueBox.style.display = 'block';
+    dialogueBox.style.pointerEvents = 'auto';
+    choiceContainer.style.display = 'none';
+    chatContainer.style.display = 'none';
+    nameInputContainer.style.display = 'none';
+    isFreeTalking = false;
+
+    // ?˜ì´???„ì›ƒ ?¨ê³¼ ?ìš©
+    if (scene.fade || (scene.text && scene.text.includes("?˜ì´???„ì›ƒ")) || (scene.text && scene.text.includes("?´ë‘?Œì§‘?ˆë‹¤"))) {
+        fadeLayer.classList.add('active');
+        if (scene.tbc) {
+            setTimeout(() => {
+                tbcText.classList.add('show');
+            }, 1000);
+        }
+    } else {
+        fadeLayer.classList.remove('active');
+        tbcText.classList.remove('show');
+    }
+
+    // ë°°ê²½ ?…ë°?´íŠ¸
+    if (scene.background) {
+        // ë°°ê²½ ?´ë?ì§€ê°€ ë¡œë“œ???Œê¹Œì§€ ?€ê¸°í•˜??ë°°ê²½??ë¨¼ì? ?˜ì˜¤?„ë¡ ??
+        const bgUrl = getAssetUrl(scene.background);
+        lastBgUrl = bgUrl;
+        
+        // CG ?´ë²¤???´ê¸ˆ ì²´í¬ (ê°¤ëŸ¬ë¦¬ì— ?±ë¡??CG ë°°ê²½?´ë©´ ?´ê¸ˆ)
+        // ê²½ë¡œ??ê´€ê³„ì—†???Œì¼ëª…ì´ GALLERY_CG???±ë¡??ID?€ ?¼ì¹˜?˜ë©´ ?´ê¸ˆ
+        const cgFileName = scene.background.split('/').pop().replace(/\.(png|jpg|jpeg|webp)$/i, '');
+        unlockCG(cgFileName);
+        
+        await new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                if (lastBgUrl === bgUrl) {
+                    bgLayer.style.backgroundImage = `url(${bgUrl})`;
+                }
+                resolve();
+            };
+            img.onerror = resolve; // ?ëŸ¬ ë°œìƒ ?œì—???¤ìŒ ?¨ê³„ë¡?ì§„í–‰
+            img.src = bgUrl;
+        });
+    }
+
+    // ?ˆì´??ì»¨ë””??ë°©ì?
+    if (currentSceneId !== sceneId) return;
+
+    // ?Œë˜ê·??¤ì • (?¸ë“œ ì§„ì… ???ë™ ?¤ì •)
+    if (scene.setFlag) {
+        gameState[scene.setFlag] = true;
+    }
+    if (scene.setFlags && Array.isArray(scene.setFlags)) {
+        scene.setFlags.forEach(flag => {
+            gameState[flag] = true;
+        });
+    }
+
+    // ?¤íƒ¯ ?…ë°?´íŠ¸ (?¸ë“œ ì§„ì… ???ë™ ?¤ì •)
+    if (scene.stats) {
+        for (const [char, stats] of Object.entries(scene.stats)) {
+            const charNameMap = {
+                "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+                "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Teacher": "Teacher", "Nurse": "Nurse"
+            };
+            const charKey = charNameMap[char] || char;
+            if (gameState.stats[charKey]) {
+                if (stats.affinity) {
+                    gameState.stats[charKey].affinity = Math.max(-100, Math.min(100, gameState.stats[charKey].affinity + stats.affinity));
+                    console.log(`Scene Stat Change (${charKey}): Affinity ${stats.affinity} (Total: Aff ${gameState.stats[charKey].affinity})`);
+                    showAffinityChange(stats.affinity, charKey);
+                    // ìµœë? ?¸ê°???…ë°?´íŠ¸ (?œì • ?´ê¸ˆ??
+                    updateMaxAffinity(charKey, gameState.stats[charKey].affinity);
+                    // ?¸ê°??100 ?¬ì„± ??ê°¤ëŸ¬ë¦?ìºë¦­???´ê¸ˆ
+                    checkAffinityUnlock(charKey);
+                }
+            }
+        }
+    }
+
+    // ë°??¸ì„ ?„í„° ?ìš©
+    bgLayer.classList.remove('night', 'sunset');
+    if (scene.night) {
+        bgLayer.classList.add('night');
+    } else if (scene.sunset) {
+        bgLayer.classList.add('sunset');
+    }
+
+    // ìºë¦­???…ë°?´íŠ¸
+    // ?¥ë©´ ?°ì´?°ì— ìºë¦­???•ë³´(character ?ëŠ” characters)ê°€ ëª…ì‹œ?˜ì–´ ?ˆì„ ?Œë§Œ ?…ë°?´íŠ¸?©ë‹ˆ??
+    if (scene.hasOwnProperty('characters') || scene.hasOwnProperty('character')) {
+        const newCharMap = {}; // ?¬ë¡¯ë³„ë¡œ ?œì‹œ?˜ì–´?????´ë?ì§€ URLê³??µì…˜ ë§?
+        const charOptions = {}; // ?¬ë¡¯ë³??µì…˜ (opacity ??
+        if (scene.characters) {
+            Object.entries(scene.characters).forEach(([pos, value]) => {
+                const posKey = pos.toLowerCase();
+                // valueê°€ ê°ì²´??ê²½ìš° { src, opacity } ?•íƒœ
+                if (typeof value === 'object' && value !== null && value.src) {
+                    newCharMap[posKey] = getAssetUrl(value.src);
+                    charOptions[posKey] = { opacity: value.opacity ?? 1 };
+                } else {
+                    // ?¨ìˆœ ë¬¸ì?´ì¸ ê²½ìš° ?´ë?ì§€ ê²½ë¡œ
+                    newCharMap[posKey] = getAssetUrl(value);
+                    charOptions[posKey] = { opacity: 1 };
+                }
+            });
+        } else if (scene.character) {
+            newCharMap['center'] = getAssetUrl(scene.character);
+            charOptions['center'] = { opacity: 1 };
+        }
+
+        // ë°”ë€Œì–´?????¬ë¡¯ ?•ì¸
+        const changedSlots = [];
+        Object.entries(charSlots).forEach(([pos, slot]) => {
+            if (!slot) return;
+            const existingImg = slot.querySelector('img');
+            const newUrl = newCharMap[pos];
+
+            if (existingImg) {
+                // ê¸°ì¡´ ?´ë?ì§€ê°€ ?ˆëŠ”???ˆë¡œ???°ì´?°ê? ?†ê±°?? ê²½ë¡œê°€ ë°”ë€?ê²½ìš°
+                if (!newUrl || existingImg.dataset.rawSrc !== newUrl) {
+                    changedSlots.push(pos);
+                }
+            } else {
+                // ê¸°ì¡´ ?´ë?ì§€ê°€ ?†ëŠ”???ˆë¡œ???°ì´?°ê? ?ˆëŠ” ê²½ìš°
+                if (newUrl) changedSlots.push(pos);
+            }
+        });
+
+        // ë³€ê²??¬í•­???ˆëŠ” ê²½ìš°?ë§Œ ì²˜ë¦¬
+        if (changedSlots.length > 0) {
+            const charPromises = Object.entries(newCharMap)
+                .filter(([pos]) => changedSlots.includes(pos))
+                .map(([pos, charUrl]) => {
+                    return new Promise((resolve) => {
+                        const img = document.createElement('img');
+                        img.onload = () => {
+                            img.dataset.rawSrc = charUrl;
+                            // ìºë¦­?°ë³„ opacity ?ìš©
+                            const options = charOptions[pos] || { opacity: 1 };
+                            if (options.opacity !== 1) {
+                                img.style.opacity = options.opacity;
+                            }
+                            resolve({ pos, img, sceneId });
+                        };
+                        img.onerror = () => {
+                            console.error("ìºë¦­???´ë?ì§€ ë¡œë“œ ?¤íŒ¨:", charUrl);
+                            resolve(null);
+                        };
+                        img.src = charUrl;
+                        if (scene.silhouette) img.classList.add('silhouette');
+                        if (scene.thinking) img.classList.add('thinking');
+                        img.classList.add('char-breathing');
+                    });
+                });
+
+            const loadedChars = await Promise.all(charPromises);
+            
+            // ?ˆì´??ì»¨ë””??ë°©ì?
+            if (currentSceneId !== sceneId) return;
+
+            // ë°”ë€??¬ë¡¯??ì£¼ì²´ë§?ì¦‰ì‹œ êµì²´
+            loadedChars.forEach(result => {
+                if (result && charSlots[result.pos]) {
+                    charSlots[result.pos].innerHTML = ''; // ì¦‰ì‹œ êµì²´ (?˜ì´???†ìŒ)
+                    charSlots[result.pos].appendChild(result.img);
+                }
+            });
+
+            // ?´ì¥?˜ëŠ” ?¬ë¡¯ ì²˜ë¦¬
+            Object.keys(charSlots).forEach(pos => {
+                if (!newCharMap[pos] && changedSlots.includes(pos)) {
+                    if (charSlots[pos]) charSlots[pos].innerHTML = '';
+                }
+            });
+        }
+    }
+
+    // ?´ë¦„ ?œê·¸ ?…ë°?´íŠ¸
+    updateNameTag(scene.name);
+
+    // ?¤ìŒ ì§€?œê³„ ì´ˆê¸°??
+    nextIndicator.style.display = 'none';
+    nextIndicator.classList.remove('fade-in'); // ? ë‹ˆë©”ì´???´ë˜???œê±°
+
+    // ?„ë¦¬? í‚¹ ëª¨ë“œ ?•ì¸
+    if (scene.type === 'free_talk') {
+        await startFreeTalk(scene);
+    } else if (scene.type === 'input') {
+        dialogueBox.style.pointerEvents = 'auto'; // ?…ë ¥ì°½ì´ ?€?”ì°½ ?ˆì— ?ˆìœ¼ë¯€ë¡?auto ? ì?
+        if (scene.text) {
+            await typeText(scene.text, scene.name);
+            if (currentSceneId !== sceneId) return;
+        }
+        nameInputContainer.style.display = 'block';
+        playerNameInput.value = "";
+        playerNameInput.focus();
+    } else {
+        // ?ìŠ¤???€?´í•‘ ?¨ê³¼
+        if (scene.text) {
+            await typeText(scene.text, scene.name);
+            if (currentSceneId !== sceneId) return;
+        } else {
+            messageEl.textContent = "";
+        }
+
+        // ? íƒì§€ê°€ ?†ê±°?? ? íƒì§€ê°€ ?˜ë‚˜ë¿ì´ê³?ê·??ìŠ¤?¸ê? "?¤ìŒ" ?ëŠ” "Next"??ê²½ìš° ì§€?œê³„ ?œì‹œ
+        let showNextIndicator = !scene.choices;
+        if (scene.choices) {
+            const availableChoices = scene.choices.filter(choice => {
+                if (choice.condition && !gameState[choice.condition]) return false;
+                if (choice.excludeCondition && gameState[choice.excludeCondition]) return false;
+                return true;
+            });
+            if (availableChoices.length === 1 && (availableChoices[0].text === "?¤ìŒ" || availableChoices[0].text === "Next")) {
+                showNextIndicator = true;
+            }
+        }
+
+        if (showNextIndicator) {
+            // ?œë„¤ë§ˆí‹± ëª¨ë“œ (?ìŠ¤???†ëŠ” ?¥ë©´) ?±ì—?œëŠ” ì§€?œê³„ ?±ì¥????¶¤
+            if (!scene.text && (!scene.choices || scene.choices.length === 0)) {
+                setTimeout(() => {
+                    if (currentSceneId === sceneId) {
+                        nextIndicator.style.display = 'block';
+                        nextIndicator.classList.add('fade-in');
+                    }
+                }, 1500);
+            } else {
+                nextIndicator.style.display = 'block';
+            }
+        }
+
+        // ?ë™ ì§„í–‰ ë¡œì§: ?€?¬ë„ ?†ê³  ? íƒì§€???†ëŠ” ?¼ìš°???„ìš© ?¸ë“œ ì²˜ë¦¬
+        if (!scene.text && (!scene.choices || scene.choices.length === 0)) {
+            const nextId = resolveNextScene(scene);
+            if (nextId && nextId !== sceneId) {
+                // ?œë¹„?¤ì‹ (?´ë?ì§€)ë§?ë³´ì—¬ì£¼ê¸°
+                if (scene.background || scene.character || scene.characters) {
+                    // ?€?”ì°½?€ ?¨ê¸°ê³?ì§€?œê³„??ë³´ì´ê²?
+                    dialogueBox.style.display = 'none';
+                    nextIndicator.style.display = 'block';
+                    // ?´ë¦­ ?´ë²¤??ë¦¬ìŠ¤?ˆë? ??ë²ˆë§Œ ?‘ë™?˜ê²Œ ?±ë¡
+                    const proceedToNext = () => {
+                        window.removeEventListener('click', proceedToNext);
+                        window.removeEventListener('touchstart', proceedToNext);
+                        renderScene(nextId);
+                    };
+                    setTimeout(() => {
+                        window.addEventListener('click', proceedToNext);
+                        window.addEventListener('touchstart', proceedToNext);
+                    }, 1500); // ì§€?œê³„ê°€ ?˜í??˜ëŠ” ?œì ??1.5ì´??„ì—ë§??´ë¦­ ê°€?¥í•˜?„ë¡ ë³€ê²?
+                } else {
+                    setTimeout(() => renderScene(nextId), 0);
+                }
+            }
+        }
+    }
+}
+
+const SEND_ICON = `<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>`;
+
+// ê²Œì„ ???Œë˜ê·¸ë? ê¸°ë°˜?¼ë¡œ ìºë¦­?°ì˜ ê¸°ì–µ(ì»¨í…?¤íŠ¸)???ì„±?˜ëŠ” ?¨ìˆ˜
+function getGameContext(charName, isEn) {
+    const memories = FLAG_MEMORIES.filter(m => {
+        // ìºë¦­???´ë¦„ ë§¤ì¹­ (?œê?/?ì–´ ëª¨ë‘ ê³ ë ¤)
+        const charMatch = m.char === charName ||
+            (charName === "?œì—°" && m.char === "Seoyeon") ||
+            (charName === "Seoyeon" && m.char === "?œì—°") ||
+            (charName === "? ë‚˜" && m.char === "Yuna") ||
+            (charName === "Yuna" && m.char === "? ë‚˜") ||
+            (charName === "?¤ì¸" && m.char === "Dain") ||
+            (charName === "Dain" && m.char === "?¤ì¸");
+        return charMatch && gameState[m.flag];
+    });
+
+    if (memories.length === 0) return "";
+
+    const header = isEn ? "\n\n[Recent Events & Memories]:\n" : "\n\n[ìµœê·¼ ?¬ê±´ ë°?ê¸°ì–µ]:\n";
+    return header + memories.map(m => {
+        let text = isEn ? m.en : m.ko;
+        return `- ${text.replace(/{name}/g, gameState.playerName)}`;
+    }).join("\n");
+}
+
+// ?¤ë¥¸ ìºë¦­?°ë“¤???€???•ë³´ë¥??ì„±?˜ëŠ” ?¨ìˆ˜
+function getSocialContext(currentCharName, isEn) {
+    const charNameMap = {
+        "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+        "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Homeroom Teacher": "Teacher", "Nurse": "Nurse"
+    };
+
+    const characters = isEn ? {
+        "Seoyeon": "Student Council President. Kind but lonely.",
+        "Yuna": "Mysterious girl. Interested in the user's 'light'.",
+        "Dain": "Energetic girl. Close friend of the user.",
+        "Homeroom Teacher": "Professional but has a clumsy side.",
+        "Nurse": "A mature and playful health teacher who cares deeply for her students."
+    } : {
+        "?œì—°": "?™ìƒ?Œì¥. ëª¨ë‘?ê²Œ ì¹œì ˆ?˜ì?ë§??¸ë¡œ?€??????",
+        "? ë‚˜": "? ë¹„ë¡œìš´ ?Œë?. ì£¼ì¸ê³µì˜ 'ë¹???ì§‘ì°©??",
+        "?¤ì¸": "?œê¸°ì°??Œë?. ì£¼ì¸ê³µê³¼ ?¸í•œ ì¹œêµ¬ ?¬ì´.",
+        "?´ì„? ìƒ??: "?„ë¬¸?ì¸ êµì‚¬ì§€ë§??ˆë‹¹?¼ê? ?ˆìŒ.",
+        "ë³´ê±´? ìƒ??: "ë§¤í˜¹?ì´ê³??¥ë‚œê¸?ë§ì? ë³´ê±´ êµì‚¬."
+    };
+
+    const otherChars = Object.entries(characters)
+        .filter(([name]) => name !== currentCharName)
+        .map(([name, desc]) => {
+            const charKey = charNameMap[name] || name;
+            const affinity = gameState.stats[charKey] ? gameState.stats[charKey].affinity : 0;
+            let status = "";
+            
+            if (gameState[`isDating_${charKey}`] || gameState[`isDating_${name}`]) {
+                status = isEn ? " (Currently DATING the user)" : " (?„ì¬ ?¬ìš©?ì? ?¬ê????¬ì´)";
+            } else if (affinity >= 70) {
+                status = isEn ? " (Convinced they are dating the user)" : " (?¬ìš©?ì? ?¬ê????¬ì´?¼ê³  ?•ì‹ ??";
+            } else if (affinity >= 50) {
+                status = isEn ? " (Suspecting they are dating the user)" : " (?¬ìš©?ì? ?¬ê????¬ì´?¸ì? ?˜ì‹¬??";
+            }
+            
+            const affinityText = isEn ? ` (Affinity: ${affinity})` : ` (?¸ê°?? ${affinity})`;
+            return `- ${name}: ${desc}${affinityText}${status}`;
+        })
+        .join("\n");
+
+    const header = isEn ? "\n\n[Other Characters in School & Your Awareness]:\n" : "\n\n[?™êµ???¤ë¥¸ ?¸ë¬¼??ë°??¹ì‹ ???¸ì? ?íƒœ]:\n";
+    const jealousyInstruction = isEn ? 
+        "\nNote: You are aware of the user's relationship with others. If their affinity is high (50+), you may feel jealous, suspicious, or obsessive depending on your personality." :
+        "\nì°¸ê³ : ?¹ì‹ ?€ ?¬ìš©?ì? ?¤ë¥¸ ìºë¦­?°ë“¤??ê´€ê³„ë? ?¸ì??˜ê³  ?ˆìŠµ?ˆë‹¤. ?¤ë¥¸ ìºë¦­?°ì˜ ?¸ê°?„ê? ?’ì„ ê²½ìš°(50 ?´ìƒ), ?¹ì‹ ???±ê²©???°ë¼ ì§ˆíˆ¬, ?˜ì‹¬, ?ëŠ” ì§‘ì°©??ë³´ì¼ ???ˆìŠµ?ˆë‹¤.";
+
+    return header + otherChars + jealousyInstruction;
+}
+
+async function startFreeTalk(scene) {
+    isFreeTalking = true;
+    freeTalkTurns = 0;
+    currentMaxTurns = scene.maxTurns || DEFAULT_MAX_FREE_TALK_TURNS;
+
+    const isEn = document.documentElement.lang === 'en';
+    const gameContext = getGameContext(scene.name, isEn);
+    const socialContext = getSocialContext(scene.name, isEn);
+
+    // ìºë¦­?°ë³„ ?€??ê¸°ë¡ ë¶ˆëŸ¬?¤ê¸°
+    if (!gameState.chatMemories[scene.name]) {
+        gameState.chatMemories[scene.name] = [];
+    }
+    freeTalkHistory = [...gameState.chatMemories[scene.name]];
+
+    // ?„ì¬ ë°°ê²½ ?´ë?ì§€ ?Œì¼ëª…ì—???¥ì†Œ ? ì¶”
+    let locationName = isEn ? "School" : "?™êµ";
+    const bgUrl = bgLayer.style.backgroundImage;
+    if (bgUrl.includes('room_school')) locationName = isEn ? "Classroom" : "êµì‹¤";
+    else if (bgUrl.includes('load_school')) locationName = isEn ? "Hallway" : "ë³µë„";
+    else if (bgUrl.includes('school.png')) locationName = isEn ? "School Gate" : "êµë¬¸ ??;
+    else if (bgUrl.includes('top_school')) locationName = isEn ? "Rooftop" : "?™êµ ?¥ìƒ";
+    else if (bgUrl.includes('playground')) locationName = isEn ? "Playground" : "?´ë™??;
+    else if (bgUrl.includes('gym')) locationName = isEn ? "Gym" : "ì²´ìœ¡ê´€";
+    else if (bgUrl.includes('nurse_room')) locationName = isEn ? "Nurse's Office" : "ë³´ê±´??;
+    else if (bgUrl.includes('library')) locationName = isEn ? "Library" : "?„ì„œê´€";
+    else if (bgUrl.includes('home_room')) locationName = isEn ? "My Room" : "ì£¼ì¸ê³µì˜ ë°?;
+
+    // ?œìŠ¤???„ë¡¬?„íŠ¸ ?¤ì •
+    const charNameMap = {
+        "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+        "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Homeroom Teacher": "Teacher", "Nurse": "Nurse"
+    };
+    const charKey = charNameMap[scene.name] || scene.name;
+    const knowsName = gameState[`knowsName_${charKey}`];
+
+    // ìºë¦­???¤íƒ¯ ê°€?¸ì˜¤ê¸?(?œê? ?´ë¦„ ?€??
+    const charStats = gameState.stats[charKey] || { affinity: 0 };
+
+    // ?„ë¡¬?„íŠ¸ ?°ì´??ê°€?¸ì˜¤ê¸?(ë¶„ë¦¬???Œì¼)
+    const promptData = window.getPromptData(isEn, gameState.playerName);
+
+    // ?¬ê????¬ì´??ê²½ìš° ?¸ì¹­ ê°€?´ë“œ?¼ì¸ ì¶”ê?
+    let datingGuideline = "";
+    const isDatingCurrent = gameState[`isDating_${charKey}`] || gameState[`isDating_${scene.name}`];
+
+    if (isDatingCurrent) {
+        datingGuideline = isEn ?
+            `\n- SPECIAL: You are currently DATING the user. Use extremely intimate and affectionate nicknames regardless of the affinity tiers below. Do not hesitate to express deep romantic desire and lead a highly seductive atmosphere.` :
+            `\n- ?¹ë³„ ì§€ì¹? ?¹ì‹ ?€ ?„ì¬ ?¬ìš©?ì? ?¬ê????¬ì´?…ë‹ˆ?? ?„ë˜???¸ê°???±ê¸‰ê³??ê??†ì´ ë§¤ìš° ì¹œë??˜ê³  ? ì • ?´ë¦° ?¸ì¹­(?ê¸°?? ???¬ë‘, ?¬ë³´ ?????¬ìš©?˜ì„¸?? ê¹Šì? ?°ì¸ ê´€ê³„ì„??ê°•ì¡°?˜ë©°, ?ë„ ì§™ì? ? ì • ?œí˜„ê³??„ë°œ?ì¸ ?œë„ë¡??€?”ì˜ ?˜ìœ„ë¥?ê³¼ê°?˜ê²Œ ?’ì´?¸ìš”.`;
+
+        // ?‘ë‹¤ë¦?ë¬¸ì–´ë°? ê°ì? ë¡œì§
+        const otherDatingChars = Object.keys(charNameMap).filter(name => {
+            const key = charNameMap[name];
+            return key !== charKey && (gameState[`isDating_${key}`] || gameState[`isDating_${name}`]);
+        });
+
+        if (otherDatingChars.length > 0) {
+            const jealousyPrompt = isEn ?
+                `\n- JEALOUSY: You noticed the user is also dating other people (${otherDatingChars.join(", ")}). If the user acts unfaithfully or mentions them, react with intense jealousy, suspicion, or sadness according to your personality.` :
+                `\n- ì§ˆíˆ¬ ì§€ì¹? ?¹ì‹ ?€ ?¬ìš©?ê? ?¤ë¥¸ ?¬ëŒ??${otherDatingChars.join(", ")})ê³¼ë„ ?¬ê?ê³??ˆë‹¤???¬ì‹¤???ˆì¹˜ì±˜ìŠµ?ˆë‹¤. ?¬ìš©?ê? ë¶ˆì„±?¤í•˜ê²??‰ë™?˜ê±°???¤ë¥¸ ìºë¦­?°ë? ?¸ê¸‰??ê²½ìš°, ?¹ì‹ ???±ê²©??ë§ì¶° ê°•í•œ ì§ˆíˆ¬, ?˜ì‹¬, ?ëŠ” ?¬í””???œí˜„?˜ì„¸??`;
+            datingGuideline += jealousyPrompt;
+        }
+    }
+
+    // ?µì‹  ë§¤ì²´ ?ë‹¨ (?€ë©?vs ?ê²©)
+    const remoteKeywords = ["?°ë½", "ë©”ì‹œì§€", "?„í™”", "??, "ë¬¸ì", "Contact", "Message", "Call", "Text", "?„ì†¡"];
+    const isRemote = remoteKeywords.some(k =>
+        (scene.context && scene.context.includes(k)) ||
+        (scene.buttonText && scene.buttonText.includes(k)) ||
+        (scene.text && scene.text.includes(k))
+    );
+
+    const mediumInstruction = isEn ?
+        (isRemote ? "\n- MEDIUM: You are communicating via PHONE/MESSENGER. Do not mention physical actions like 'looking at the user' or 'touching'. Use text-style expressions if appropriate." : "\n- MEDIUM: You are talking FACE-TO-FACE. You can mention eye contact, facial expressions, and physical proximity.") :
+        (isRemote ? "\n- ë§¤ì²´ ì§€ì¹? ?„ì¬ '?„í™”' ?ëŠ” 'ë©”ì‹œì§€'ë¡??°ë½ ì¤‘ì…?ˆë‹¤. '?ˆì„ ë§ˆì£¼ì¹œë‹¤'ê±°ë‚˜ '?ì„ ?¡ëŠ”?????±ì˜ ë¬¼ë¦¬???‘ì´‰ ë¬˜ì‚¬???¼í•˜?¸ìš”. ?€???ìŠ¤??ë©”ì‹œì§€???µí™” ?í™©??ë§ëŠ” ?œí˜„???¬ìš©?˜ì„¸??" : "\n- ë§¤ì²´ ì§€ì¹? ?„ì¬ '?€ë©??˜ì—¬ ?€??ì¤‘ì…?ˆë‹¤. ?ˆë§ì¶? ?œì • ë³€?? ë¬¼ë¦¬??ê±°ë¦¬ê°??±ì„ ?ìœ ë¡?²Œ ë¬˜ì‚¬?????ˆìŠµ?ˆë‹¤.");
+
+    // ?œìŠ¤???„ë¡¬?„íŠ¸ ?ì„±
+    const systemPrompt = window.buildSystemPrompt({
+        isEn,
+        sceneName: charKey,
+        displayName: scene.name,
+        locationName,
+        context: scene.context || (isEn ? "Talking with the user." : "?¬ìš©?ì? ?€??ì¤‘ì…?ˆë‹¤."),
+        affinity: charStats.affinity,
+        extraGuideline: scene.extra_guideline || "",
+        gameContext,
+        socialContext,
+        mediumInstruction,
+        promptData,
+        currentMaxTurns,
+        playerName: gameState.playerName,
+        knowsName,
+        datingGuideline
+    });
+
+    // ?œìŠ¤???„ë¡¬?„íŠ¸ë¥?ë§??ì— ë°°ì¹˜
+    freeTalkHistory = [{ role: "system", content: systemPrompt }, ...freeTalkHistory.filter(m => m.role !== "system")];
+
+    chatContainer.style.display = 'block';
+
+    // ì±„íŒ… ê°€?´ë“œ ?…ë°?´íŠ¸
+    const chatGuideEl = document.getElementById('chat-guide');
+    if (chatGuideEl) {
+        if (isEn) {
+            chatGuideEl.innerHTML = isRemote 
+                ? "<b>Tip:</b> Describe tone in brackets, e.g., <i>(smiling) Hey...</i>"
+                : "<b>Tip:</b> Describe scene or actions, e.g., <i>(holds hand) Let's go.</i> or <i>(it's pouring rain) Take out the umbrella.</i>";
+        } else {
+            chatGuideEl.innerHTML = isRemote 
+                ? "<b>Tip:</b> <i>(?ƒìœ¼ë©? ??</i> ì²˜ëŸ¼ ë©”ì‹ ?€?ì„œ???´ì¡°???í™©???œí˜„?´ë³´?¸ìš”."
+                : "<b>Tip:</b> <i>(?ì„ ?¡ìœ¼ë©? ê°™ì´ ê°€??</i> ?ëŠ” <i>(ë¹„ê? ?Ÿì•„ì§„ë‹¤) ë¹„ì˜¨???°ì‚° ì¢€ êº¼ë‚´ì¤?</i> ì²˜ëŸ¼ ë§í•´ë³´ì„¸??";
+        }
+    }
+
+    // ë²„íŠ¼ ?ìŠ¤???ëŠ” ?„ì´ì½??¤ì • (ë§í•˜ê¸? ?„ì†¡, ?„ì†¡?˜ê¸° ?±ì? ?„ì´ì½˜ìœ¼ë¡??œì‹œ)
+    const iconButtons = ["ë§í•˜ê¸?, "?„ì†¡", "?„ì†¡?˜ê¸°", "Send"];
+    if (scene.buttonText && !iconButtons.includes(scene.buttonText)) {
+        chatSendBtn.textContent = scene.buttonText;
+        chatSendBtn.style.borderRadius = "8px";
+        chatSendBtn.style.width = "auto";
+        chatSendBtn.style.padding = "0 20px";
+    } else {
+        chatSendBtn.innerHTML = SEND_ICON;
+        chatSendBtn.style.borderRadius = "50%";
+        chatSendBtn.style.width = "45px";
+        chatSendBtn.style.padding = "0";
+    }
+
+    turnCountEl.textContent = currentMaxTurns;
+    if (chatSkipBtn) chatSkipBtn.disabled = false;
+
+    if (scene.text) {
+        await typeText(scene.text, scene.name);
+        freeTalkHistory.push({ role: "assistant", content: scene.text });
+    }
+}
+
+
+function getBatchimInfo(str) {
+    if (!str || str.length === 0) return { hasBatchim: false, isRieul: false };
+    
+    const lastChar = str[str.length - 1];
+    const code = lastChar.charCodeAt(0);
+
+    if (code < 0xAC00 || code > 0xD7A3) {
+        return { hasBatchim: false, isRieul: false };
+    }
+	
+	// ë°›ì¹¨ ê³„ì‚°: (? ë‹ˆì½”ë“œ - 0xAC00) % 28
+    const batchimIndex = (code - 0xAC00) % 28;
+    return {
+        hasBatchim: batchimIndex !== 0,
+        isRieul: batchimIndex === 8
+    };
+}
+
+function getProperParticle(name, nextChars) {
+    const { hasBatchim, isRieul } = getBatchimInfo(name);
+    
+    // ??+ ?¼ë¡œ/ë¡??ˆì™¸ ì²˜ë¦¬
+    if (nextChars.startsWith('?¼ë¡œ')) {
+        return { correct: (hasBatchim && !isRieul) ? '?¼ë¡œ' : 'ë¡?, removeLength: 2 };
+    }
+    if (nextChars.startsWith('ë¡?)) {
+        return { correct: (hasBatchim && !isRieul) ? '?¼ë¡œ' : 'ë¡?, removeLength: 1 };
+    }
+    
+    const particles = [
+		{ pattern: '?´ë¼ê³?, with: '?´ë¼ê³?, without: '?¼ê³ ' },
+        { pattern: '?¼ê³ ', with: '?´ë¼ê³?, without: '?¼ê³ ' },
+        { pattern: '?´ë¼', with: '?´ë¼', without: '?? },
+        { pattern: '?€??, with: '?€', without: '?? },
+        { pattern: '?´ê?', with: '??, without: 'ê°€' },
+        { pattern: '?„ë?', with: '??, without: 'ë¥? },
+        { pattern: '?´ë‘', with: '?´ë‘', without: '?? },
+        { pattern: '?´ë‚˜', with: '?´ë‚˜', without: '?? },
+        { pattern: '?´ë‹¤', with: '?´ë‹¤', without: '?? },
+        { pattern: '??, with: '?´ë‘', without: '?? },
+        { pattern: '??, with: '?´ë‚˜', without: '?? },
+        { pattern: '??, with: '?´ë‹¤', without: '?? },
+        { pattern: '?€', with: '?€', without: '?? },
+        { pattern: '??, with: '?€', without: '?? },
+        { pattern: '??, with: '??, without: 'ê°€' },
+        { pattern: 'ê°€', with: '??, without: 'ê°€' },
+        { pattern: '??, with: '??, without: 'ë¥? },
+        { pattern: 'ë¥?, with: '??, without: 'ë¥? },
+        { pattern: 'ê³?, with: 'ê³?, without: '?€' },
+        { pattern: '?€', with: 'ê³?, without: '?€' },
+        { pattern: '??, with: '??, without: '?? },
+        { pattern: '??, with: '??, without: '?? }
+    ];
+    
+    for (const p of particles) {
+        if (nextChars.startsWith(p.pattern)) {
+            const correct = hasBatchim ? p.with : p.without;
+            return { correct, removeLength: p.pattern.length };
+        }
+    }
+    
+    return null;
+}
+
+function processKoreanName(text, nameToUse, patternStr = "{name(\\?)?}") {
+    let result = '';
+    let lastIndex = 0;
+    
+    const namePattern = new RegExp(patternStr, 'g');
+    let match;
+    
+    while ((match = namePattern.exec(text)) !== null) {
+        result += text.substring(lastIndex, match.index);        
+        
+        const afterMatch = text.substring(match.index + match[0].length);
+        if (afterMatch.startsWith('??) || afterMatch.startsWith('?™ìƒ')) {
+            result += nameToUse;
+            lastIndex = match.index + match[0].length;
+            continue;
+        }
+        
+        // ì¡°ì‚¬ ì²˜ë¦¬
+        const particleResult = getProperParticle(nameToUse, afterMatch);
+        if (particleResult) {
+            result += nameToUse + particleResult.correct;
+            lastIndex = match.index + match[0].length + particleResult.removeLength;
+        } else {
+            result += nameToUse;
+            lastIndex = match.index + match[0].length;
+        }
+    }
+    
+    result += text.substring(lastIndex);
+    return result;
+}
+
+function typeText(text, charName) {
+    if (text === undefined || text === null) {
+        console.warn("typeText called with null/undefined text");
+        return Promise.resolve();
+    }
+
+    const isEn = document.documentElement.lang === 'en';
+    const isPlayer = charName === "?? || charName === "Me" || charName === "?œìŠ¤?? || charName === "System";
+
+    const charNameMap = {
+        "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+        "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Homeroom Teacher": "Teacher", "Nurse": "Nurse"
+    };
+    const charKey = charName && (charNameMap[charName] || charName);
+    const nameKnown = charKey && gameState[`knowsName_${charKey}`];
+    const defaultTitle = isEn ? "Transfer Student" : "?„í•™??;
+    
+    let processedText = text;
+    
+    // {name}?€ ??ƒ ?œìˆ˜ ?´ë¦„?¼ë¡œ (?ê¸°?Œê°œ ?±ì—???ì—°?¤ëŸ½ê²?
+    // ?œêµ­?´ì´ê³??”ìê°€ ì£¼ì¸ê³µì´ ?„ë‹ ??
+if (!isEn && !isPlayer) {
+        const nameToUseForQuestion = nameKnown ? gameState.playerName : defaultTitle;
+        
+        // {name?} ?¨í„´ ì²˜ë¦¬ (?´ë¦„ ëª¨ë? ??'?„í•™??, ????'ì£¼ì¸ê³??´ë¦„')
+        processedText = processKoreanName(text, nameToUseForQuestion, "{name\\?}");
+        
+        // {name} ?¨í„´ ì²˜ë¦¬ (?¸ì œ??'ì£¼ì¸ê³??´ë¦„')
+        processedText = processKoreanName(processedText, gameState.playerName, "{name}");
+    } else {
+        // ?ì–´?´ê±°??ë³¸ì¸ ?€?¬ë©´ ?¨ìˆœ ì¹˜í™˜
+        const nameToUse = nameKnown ? gameState.playerName : defaultTitle;
+        processedText = text.replace(/{name\?}/g, nameToUse).replace(/{name}/g, gameState.playerName);
+    }
+
+    // ?¸ê°??ë¦¬ìŠ¤??ì¹˜í™˜ {affinity_list}
+    if (processedText.includes("{affinity_list}")) {
+        const charNames = isEn ?
+            { Seoyeon: "Seoyeon", Yuna: "Yuna", Dain: "Dain", Teacher: "Teacher", Nurse: "Nurse" } :
+            { Seoyeon: "?œì—°", Yuna: "? ë‚˜", Dain: "?¤ì¸", Teacher: "?´ì„? ìƒ??, Nurse: "ë³´ê±´? ìƒ?? };
+
+        let listStr = isEn ? "\n\n[Affinity Status]\n" : "\n\n[?¸ê°???„í™©]\n";
+        for (const [key, name] of Object.entries(charNames)) {
+            // ë§Œë‚œ ?ì´ ?ˆëŠ” ìºë¦­?°ë§Œ ?œì‹œ 
+            if (!gameState["met" + key]) continue;
+            const affinity = gameState.stats[key].affinity;
+            let bar = "";
+            
+            if (affinity >= 0) {
+                // ?‘ìˆ˜???? ë¹¨ê°„ ?˜íŠ¸(?¤ï¸)?€ ?˜ì? ?˜íŠ¸(?¤)
+                const filled = Math.min(10, Math.floor(affinity / 10));
+                bar = "?¤ï¸".repeat(filled) + "?¤".repeat(10 - filled);
+            } else {
+                // ?Œìˆ˜???? ê¹¨ì§„ ?˜íŠ¸(?’”)?€ ?˜ì? ?˜íŠ¸(?¤)
+                const broken = Math.min(10, Math.floor(Math.abs(affinity) / 10));
+                bar = "?’”".repeat(broken) + "?¤".repeat(10 - broken);
+            }
+            
+            listStr += `${name}: ${bar} (${affinity}%)\n`;
+        }
+        processedText = processedText.replace(/{affinity_list}/g, listStr);
+    }
+
+    // [?°ì¶œ ?œì‘] ê¸€?ê? ??ê¸€?ì”© ì°íˆê¸??œì‘?˜ë©´ ìºë¦­?°ë? ?¤ì©ê±°ë¦¬ê²???
+    updateTalkingAnimation(charName, true);
+
+    // [?½ì†] ê¸€?ê? ???¨ì§ˆ ?Œê¹Œì§€ ê²Œì„??ë©ˆì¶”ì§€ ?Šê³  ê¸°ë‹¤ë¦¬ê²Œ ë§Œë“œ???¥ì¹˜
+    return new Promise((resolve) => {
+        isTyping = true; // "ê¸€???°ëŠ” ì¤? ?íƒœ ?œì‹œ
+        if (chatSkipBtn) chatSkipBtn.disabled = true; // ì¶œë ¥ ì¤??„ì†¡ ë²„íŠ¼ ë¹„í™œ?±í™”
+        skipTyping = false; // ?¤í‚µ ?”ì²­ ì´ˆê¸°??
+        messageEl.textContent = ""; // ?€?”ì°½ ë¹„ì?
+        
+        let charIndex = 0; // ?„ì¬ ì¶œë ¥??ê¸€???¸ë±??
+        let startTime = null; // ì¶œë ¥ ?œì‘ ?œê°
+        
+        // [?˜ì • ê°€?? ê¸€???˜ì˜¤???ë„. ?«ìê°€ ?‘ì„?˜ë¡(?? 5) ë¹¨ë¼ì§€ê³? ?´ìˆ˜ë¡??? 50) ?ë ¤ì§?
+        const speed = 30; 
+
+        // ??ê¸€?ì”© ?”ë©´??ê·¸ë ¤ì£¼ëŠ” ?µì‹¬ ?¨ìˆ˜
+        function typeFrame(timestamp) {
+            if (!startTime) startTime = timestamp; // ?œì‘ ?œê°„ ê¸°ë¡
+
+            // ? ì?ê°€ ?”ë©´ ?´ë¦­?˜ì—¬ ?¤í‚µ ?”ì²­??ê²½ìš°
+            if (skipTyping) {
+                messageEl.textContent = processedText; // ?„ì²´ ë¬¸ì¥ ì¦‰ì‹œ ?¸ì¶œ
+                isTyping = false; // ì¶œë ¥ ì¢…ë£Œ
+                if (chatSkipBtn) chatSkipBtn.disabled = false; // ë²„íŠ¼ ?œì„±??
+                skipTyping = false; // ?¤í‚µ ?”ì²­ ì²˜ë¦¬ ?„ë£Œ
+                updateTalkingAnimation(charName, false); // ìºë¦­???€ì§ì„ ?•ì?
+                resolve(); // ?‘ì—… ?„ë£Œ ë³´ê³ 
+                return;
+            }
+
+            // ê²½ê³¼ ?œê°„ ê³„ì‚°?˜ì—¬ ?„ì¬ ?„ë ˆ?„ì— ë³´ì—¬ì¤?ê¸€????ê²°ì •
+            const elapsed = timestamp - startTime;
+            const targetIndex = Math.min(Math.floor(elapsed / speed), processedText.length);
+
+            // ?„ì§ ì¶œë ¥??ê¸€?ê? ?ˆë‹¤ë©??”ë©´??ì¶”ê?
+            if (charIndex < targetIndex) {
+                messageEl.textContent = processedText.substring(0, targetIndex);
+                charIndex = targetIndex;
+            }
+
+            // ì¶œë ¥??ê¸€?ê? ?¨ì•˜?¤ë©´ ?¤ìŒ ?„ë ˆ???”ì²­
+            if (charIndex < processedText.length) {
+                requestAnimationFrame(typeFrame);
+            } else {
+                // ì¶œë ¥ ?„ë£Œ ??ë§ˆë¬´ë¦??‘ì—…
+                isTyping = false;
+                if (chatSkipBtn) chatSkipBtn.disabled = false;
+                updateTalkingAnimation(charName, false); // ìºë¦­???€ì§ì„ ?•ì?
+                resolve(); // ?¤ìŒ ?€??ì§„í–‰ ?ˆìš©
+            }
+        }
+
+        // ? ë‹ˆë©”ì´??ë£¨í”„ ?œì‘
+        requestAnimationFrame(typeFrame);
+    });
+}
+
+function getFallbackReply(charName, isEn) {
+    const charNameMap = {
+        "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+        "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Teacher": "Teacher", "Nurse": "Nurse"
+    };
+    const charKey = charNameMap[charName] || charName;
+    const affinity = gameState.stats[charKey]?.affinity || 0;
+    const isDating = gameState[`isDating_${charKey}`] || gameState[`isDating_${charName}`];
+
+    const scene = getScene(currentSceneId);
+    const remoteKeywords = ["?°ë½", "ë©”ì‹œì§€", "?„í™”", "??, "ë¬¸ì", "Contact", "Message", "Call", "Text", "?„ì†¡"];
+    const isRemote = remoteKeywords.some(k =>
+        (scene.context && scene.context.includes(k)) ||
+        (scene.buttonText && scene.buttonText.includes(k)) ||
+        (scene.text && scene.text.includes(k))
+    );
+
+    // prompts.js???•ì˜??ê³µí†µ ?¨ìˆ˜ ?¸ì¶œ
+    return window.getFallbackReply(charKey, isEn, isDating, affinity, isRemote, gameState.playerName);
+}
+
+function showCustomModal(message, isAlert = false) {
+    return new Promise((resolve) => {
+        modalMessage.textContent = message;
+        customModal.style.display = 'flex';
+
+        if (isAlert) {
+            modalCancelBtn.style.display = 'none';
+        } else {
+            modalCancelBtn.style.display = 'inline-block';
+        }
+
+        const onConfirm = () => {
+            cleanup();
+            resolve(true);
+        };
+
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+
+        const cleanup = () => {
+            modalConfirmBtn.removeEventListener('click', onConfirm);
+            modalCancelBtn.removeEventListener('click', onCancel);
+            customModal.style.display = 'none';
+        };
+
+        modalConfirmBtn.addEventListener('click', onConfirm);
+        modalCancelBtn.addEventListener('click', onCancel);
+    });
+}
+
+async function skipFreeTalk() {
+    if (isTyping || !isFreeTalking) return;
+
+    const isEn = document.documentElement.lang === 'en';
+    const confirmMsg = isEn ? "Do you want to stop the conversation and proceed to the next scene?" : "?€?”ë? ì¤‘ë‹¨?˜ê³  ?¤ìŒ ?¥ë©´?¼ë¡œ ?˜ì–´ê°€?œê² ?µë‹ˆê¹?";
+
+    const confirmed = await showCustomModal(confirmMsg);
+
+    if (confirmed) {
+        freeTalkTurns = currentMaxTurns;
+        gameState[`messaged_${currentSceneId}`] = true;
+
+        // ?¤í‚µ ?œì—???„ë¦¬? í‚¹ ?Ÿìˆ˜ ì¦ê??˜ì? ?ŠìŒ
+
+        chatContainer.style.display = 'none';
+        isFreeTalking = false;
+
+        const endMsg = isEn ?
+            "\n\n(Conversation ended. Click the screen to continue.)" :
+            "\n\n(?€?”ê? ì¢…ë£Œ?˜ì—ˆ?µë‹ˆ?? ?”ë©´???´ë¦­?˜ì—¬ ê³„ì†?˜ì„¸??)";
+        messageEl.textContent += endMsg;
+    }
+}
+
+async function sendChatMessage() {
+    const text = chatInput.value.trim();
+    if (!text || freeTalkTurns >= currentMaxTurns || isTyping) return;
+
+    chatInput.value = "";
+    freeTalkTurns++;
+    turnCountEl.textContent = currentMaxTurns - freeTalkTurns;
+
+    // ?„ë¦¬? í‚¹ ?Ÿìˆ˜ ì¦ê? (ë§??´ë§ˆ??1??
+    const scene = getScene(currentSceneId);
+    const charNameMap = {
+        "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+        "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Homeroom Teacher": "Teacher", "Nurse": "Nurse"
+    };
+    const charKey = charNameMap[scene.name] || scene.name;
+    incrementFreeTalkCount(charKey);
+
+    // ?œìŠ¤???„ë¡¬?„íŠ¸???????•ë³´ë¥??„ì¬ ì§„í–‰ ?í™©??ë§ì¶° ?…ë°?´íŠ¸
+    if (freeTalkHistory.length > 0 && freeTalkHistory[0].role === "system") {
+        const isEn = document.documentElement.lang === 'en';
+        const remaining = currentMaxTurns - freeTalkTurns;
+        const progressTag = isEn ? 
+            `\n[CURRENT_PROGRESS]: ${freeTalkTurns}/${currentMaxTurns} turns used. ${remaining} turns remaining. ${remaining > 1 ? "Continue the conversation actively." : "This is the FINAL turn. Wrap up now."}` :
+            `\n[?„ì¬ ì§„í–‰ ?í™©]: ì´?${currentMaxTurns}??ì¤?${freeTalkTurns}??ì§„í–‰?? ${remaining}???¨ìŒ. ${remaining > 1 ? "?€?”ë? ?ê·¹?ìœ¼ë¡??´ì–´ê°€?¸ìš”." : "ì§€ê¸ˆì´ ë§ˆì?ë§??´ì…?ˆë‹¤. ?€?”ë? ê°ˆë¬´ë¦¬í•˜?¸ìš”."}`;
+        
+        // ?´ì „ ì§„í–‰ ?í™© ?œê·¸ê°€ ?ˆìœ¼ë©??œê±°?˜ê³  ???œê·¸ ì¶”ê? (ì¤‘ë³µ ë°©ì?)
+        const baseContent = freeTalkHistory[0].content.split('\n[CURRENT_PROGRESS]')[0].split('\n[?„ì¬ ì§„í–‰ ?í™©]')[0];
+        freeTalkHistory[0].content = baseContent + progressTag;
+    }
+
+    // ?¬ìš©??ë©”ì‹œì§€ ?œì‹œ
+    updateNameTag("??);
+    messageEl.textContent = text;
+    freeTalkHistory.push({ role: "user", content: text });
+
+    // ë¡œë”© ?œì‹œ
+    chatSendBtn.disabled = true;
+    if (chatSkipBtn) chatSkipBtn.disabled = true;
+    chatInput.disabled = true;
+    const originalBtnContent = chatSendBtn.innerHTML;
+    chatSendBtn.innerHTML = `<span class="loading-dots">...</span>`;
+
+    // ìºë¦­??ë°??€?”ì°½??'?ê°ì¤? ?íƒœ ?ìš©
+    const allChars = document.querySelectorAll('.char-slot img');
+    allChars.forEach(img => img.classList.add('thinking'));
+    dialogueBox.classList.add('thinking-box');
+
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: freeTalkHistory })
+        });
+
+        if (!response.ok) {
+            throw new Error(`API HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        let reply = data?.choices?.[0]?.message?.content?.trim();
+
+        // [Worker ?¸í™˜???¨ì¹˜] Workerê°€ JSON ?‘ë‹µ??ê°•ì œ?˜ê±°?? AIê°€ JSON ?•ì‹?¼ë¡œ ?µë???ê²½ìš°ë¥??€ë¹„í•˜???Œì‹±?©ë‹ˆ??
+        const likelyJson = reply && (reply.includes('{') || reply.includes('[') || reply.includes('```json'));
+        if (likelyJson) {
+            try {
+                let jsonStr = reply;
+                // markdown ì½”ë“œ ë¸”ë¡ ?œê±°
+                if (jsonStr.includes('```')) {
+                    const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                    if (match) jsonStr = match[1];
+                }
+                
+                // ?œìˆ˜ JSON ë¶€ë¶„ë§Œ ì¶”ì¶œ ?œë„ (?ìŠ¤?¸ê? ?ë’¤ë¡??ì—¬ ?ˆì„ ê²½ìš°)
+                if (!jsonStr.trim().startsWith('{') && !jsonStr.trim().startsWith('[')) {
+                    const startExpr = jsonStr.indexOf('{');
+                    const startArray = jsonStr.indexOf('[');
+                    let start = -1;
+                    if (startExpr !== -1 && startArray !== -1) start = Math.min(startExpr, startArray);
+                    else start = Math.max(startExpr, startArray);
+                    
+                    if (start !== -1) {
+                        const lastExpr = jsonStr.lastIndexOf('}');
+                        const lastArray = jsonStr.lastIndexOf(']');
+                        const end = Math.max(lastExpr, lastArray);
+                        if (end > start) {
+                            jsonStr = jsonStr.substring(start, end + 1);
+                        }
+                    }
+                }
+
+                const parsed = JSON.parse(jsonStr);
+                const getTextFromObj = (obj) => {
+                    if (typeof obj === 'string') return obj;
+                    // ?°ì„ ?œìœ„ê°€ ?’ì? ?¤ë“¤
+                    let text = obj.text || obj.dialogue || obj.content || obj.message || obj.response || obj.msg || obj.result;
+                    
+                    // ë§Œì•½ ?„ì§ ?ìŠ¤?¸ë? ëª?ì°¾ì•˜?¤ë©´, ê°ì²´??ê°?ì¤?ê°€??ê¸?ë¬¸ì?´ì„ ì°¾ì•„ë´…ë‹ˆ??(ë³´í†µ ?€?”ê? ê°€??ê¹ë‹ˆ??
+                    if (!text) {
+                        let longestStr = "";
+                        for (const key in obj) {
+                            if (typeof obj[key] === 'string' && obj[key].length > longestStr.length) {
+                                longestStr = obj[key];
+                            }
+                        }
+                        if (longestStr.length > 5) text = longestStr;
+                    }
+                    return text;
+                };
+                
+                if (Array.isArray(parsed)) {
+                    if (parsed.length > 0) {
+                        const item = parsed[0];
+                        const extracted = getTextFromObj(item);
+                        if (extracted && typeof extracted === 'string') reply = extracted;
+                    }
+                } else {
+                    const extracted = getTextFromObj(parsed);
+                    if (extracted && typeof extracted === 'string') reply = extracted;
+                }
+            } catch (e) {
+                console.warn("JSON parsing failed, using raw text:", e);
+            }
+        }
+
+        if (reply) {
+            // ?œì • ë³€???Œì‹± [EXPRESSION: name] - ?„ì—­ ê²€??/g)?¼ë¡œ ëª¨ë“  ?œê·¸ ?œê±°
+            const exprRegex = /\[EXPRESSION:\s*(\w+)\]/gi;
+            let exprMatch;
+
+            // ë§ˆì?ë§‰ìœ¼ë¡?ë§¤ì¹­???œì •???ìš©
+            while ((exprMatch = exprRegex.exec(reply)) !== null) {
+                const exprName = exprMatch[1].toLowerCase();
+                const scene = getScene(currentSceneId);
+                const charExprs = CHARACTER_EXPRESSIONS[scene.name];
+                if (charExprs && charExprs[exprName]) {
+                    const centerSlot = charSlots.center;
+                    const exprUrl = getAssetUrl(charExprs[exprName]);
+                    if (centerSlot.firstChild) {
+                        centerSlot.firstChild.src = exprUrl;
+                    } else {
+                        const img = document.createElement('img');
+                        img.src = exprUrl;
+                        centerSlot.appendChild(img);
+                    }
+                }
+            }
+            // ëª¨ë“  ?œì • ?œê·¸ ?œê±°
+            reply = reply.replace(exprRegex, "").trim();
+
+            // ?¤íƒ¯ ë³€???Œì‹± [STATS: affinity+X] - ?„ì—­ ê²€??/g)?¼ë¡œ ëª¨ë“  ?œê·¸ ?œê±°
+            const statsRegex = /\[STATS:\s*affinity\s*([+-]?\d+)\]/gi;
+            let statMatch;
+
+            while ((statMatch = statsRegex.exec(reply)) !== null) {
+                const affinityChange = parseInt(statMatch[1]);
+                const scene = getScene(currentSceneId);
+                const charNameMap = {
+                    "?œì—°": "Seoyeon", "? ë‚˜": "Yuna", "?¤ì¸": "Dain", "?´ì„? ìƒ??: "Teacher", "ë³´ê±´? ìƒ??: "Nurse",
+                    "Seoyeon": "Seoyeon", "Yuna": "Yuna", "Dain": "Dain", "Teacher": "Teacher", "Nurse": "Nurse"
+                };
+                const charKey = charNameMap[scene.name] || scene.name;
+
+                if (gameState.stats[charKey]) {
+                    gameState.stats[charKey].affinity = Math.max(-100, Math.min(100, gameState.stats[charKey].affinity + affinityChange));
+                    console.log(`AI Stat Change (${charKey}): Affinity ${affinityChange} (Total: Aff ${gameState.stats[charKey].affinity})`);
+                    showAffinityChange(affinityChange, charKey);
+                    // ìµœë? ?¸ê°???…ë°?´íŠ¸ (ê°¤ëŸ¬ë¦??œì • ?´ê¸ˆ??
+                    updateMaxAffinity(charKey, gameState.stats[charKey].affinity);
+                    // ?¸ê°??100 ?¬ì„± ??ê°¤ëŸ¬ë¦?ìºë¦­???´ê¸ˆ
+                    checkAffinityUnlock(charKey);
+                }
+            }
+            // ëª¨ë“  ?¤íƒ¯ ?œê·¸ ?œê±°
+            reply = reply.replace(statsRegex, "").trim();
+
+            // ?œê·¸ ?œê±° ???´ìš©??ë¹„ì–´?ˆì„ ê²½ìš° ?€ë¹?
+            if (!reply) {
+                reply = "...";
+            }
+
+            const scene = getScene(currentSceneId);
+            updateNameTag(scene.name);
+
+            // ?µë? ì¶œë ¥ ???ê°ì¤??íƒœ ?´ì œ
+            const allChars = document.querySelectorAll('.char-slot img');
+            allChars.forEach(img => img.classList.remove('thinking'));
+            dialogueBox.classList.remove('thinking-box');
+
+            await typeText(reply, scene.name); // ?€?´í•‘???ë‚  ?Œê¹Œì§€ ê¸°ë‹¤ë¦½ë‹ˆ??
+            freeTalkHistory.push({ role: "assistant", content: reply });
+
+            // ?€??ê¸°ë¡ ?€??(?œìŠ¤???„ë¡¬?„íŠ¸ ?œì™¸?˜ê³  ìµœê·¼ 10ê°??•ë„ë§?? ì??˜ì—¬ ì»¨í…?¤íŠ¸ ìµœì ??
+            const chatOnly = freeTalkHistory.filter(m => m.role !== "system");
+            gameState.chatMemories[scene.name] = chatOnly.slice(-10);
+        } else {
+            // AI ?‘ë‹µ??ë¹„ì–´?ˆì„ ê²½ìš°
+            const scene = getScene(currentSceneId);
+            updateNameTag(scene.name);
+            const fallbackMsg = document.documentElement.lang === 'en' ? "..." : "...";
+            await typeText(fallbackMsg, scene.name);
+        }
+
+        // ?€??ì¢…ë£Œ ì²´í¬ë¥?AI ?‘ë‹µ ì²˜ë¦¬ ?´í›„ë¡??´ë™ (?‘ë‹µ ?¤íŒ¨ ?œì—??ì¢…ë£Œ ê°€?¥í•˜?„ë¡)
+        if (freeTalkTurns >= currentMaxTurns) {
+            gameState[`messaged_${currentSceneId}`] = true;
+
+            setTimeout(() => {
+                chatContainer.style.display = 'none';
+                isFreeTalking = false;
+                const endMsg = document.documentElement.lang === 'en' ?
+                    "\n\n(Conversation ended. Click the screen to continue.)" :
+                    "\n\n(?€?”ê? ì¢…ë£Œ?˜ì—ˆ?µë‹ˆ?? ?”ë©´???´ë¦­?˜ì—¬ ê³„ì†?˜ì„¸??)";
+                messageEl.textContent += endMsg;
+            }, 500);
+        }
+    } catch (error) {
+        console.error("AI Chat Error:", error);
+
+        const scene = getScene(currentSceneId);
+        const isEn = document.documentElement.lang === 'en';
+        const fallbackMsg = getFallbackReply(scene.name, isEn);
+
+        updateNameTag(scene.name);
+        await typeText(fallbackMsg, scene.name);
+        freeTalkHistory.push({ role: "assistant", content: fallbackMsg });
+
+        // ?ëŸ¬ ë°œìƒ ??ì¦‰ì‹œ ?€??ì¢…ë£Œ ì²˜ë¦¬
+        freeTalkTurns = currentMaxTurns;
+        gameState[`messaged_${currentSceneId}`] = true;
+
+        // ?ëŸ¬ ?œì—???„ë¦¬? í‚¹ ?Ÿìˆ˜ ì¦ê??˜ì? ?ŠìŒ
+
+        setTimeout(() => {
+            chatContainer.style.display = 'none';
+            isFreeTalking = false;
+            const endMsg = isEn ?
+                "\n\n(Conversation ended. Click the screen to continue.)" :
+                "\n\n(?€?”ê? ì¢…ë£Œ?˜ì—ˆ?µë‹ˆ?? ?”ë©´???´ë¦­?˜ì—¬ ê³„ì†?˜ì„¸??)";
+            messageEl.textContent += endMsg;
+        }, 500);
+    } finally {
+        chatSendBtn.disabled = false;
+        if (chatSkipBtn) chatSkipBtn.disabled = false;
+        chatInput.disabled = false;
+        chatSendBtn.innerHTML = originalBtnContent;
+
+        // ëª¨ë“  ?ê°ì¤??íƒœ ?´ì œ
+        const allChars = document.querySelectorAll('.char-slot img');
+        allChars.forEach(img => img.classList.remove('thinking'));
+        dialogueBox.classList.remove('thinking-box');
+        
+        chatInput.focus();
+    }
+}
+
+chatSendBtn.onclick = sendChatMessage;
+if (chatSkipBtn) chatSkipBtn.onclick = skipFreeTalk;
+chatInput.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        sendChatMessage();
+    }
+};
+
+nameConfirmBtn.onclick = async () => {
+    const name = playerNameInput.value.trim();
+
+    // ? íš¨??ê²€?? 1~4?? ?«ì/?¹ìˆ˜ë¬¸ì ?œì™¸ (?œê?, ?ë¬¸ë§??ˆìš©)
+    const nameRegex = /^[a-zA-Zê°€-??{1,4}$/;
+
+    if (!nameRegex.test(name)) {
+        const isEn = document.documentElement.lang === 'en';
+        const msg = isEn ? "Please enter a name between 1-4 characters (Korean or English only)." : "?´ë¦„?€ ?œê? ?ëŠ” ?ë¬¸ 1~4?ë¡œ ?…ë ¥?´ì£¼?¸ìš”. (?«ì, ?¹ìˆ˜ë¬¸ì ?œì™¸)";
+        await showCustomModal(msg, true);
+        playerNameInput.focus();
+        return;
+    }
+
+    gameState.playerName = name;
+    nameInputContainer.style.display = 'none';
+    dialogueBox.style.pointerEvents = 'auto';
+
+    const scene = getScene(currentSceneId);
+    const nextId = resolveNextScene(scene);
+    if (nextId) {
+        renderScene(nextId);
+    }
+};
+
+// ?´ë¦„ ?…ë ¥ì°??¬ì»¤??? ì? ë°??”í„°??ì²˜ë¦¬
+playerNameInput.onblur = (e) => {
+    // ?•ì¸ ë²„íŠ¼???„ë¥´??ì¤‘ì´?¼ë©´ ?¬ì»¤?¤ë? ê°•ì œ?˜ì? ?ŠìŒ
+    if (e.relatedTarget === nameConfirmBtn) return;
+
+    if (nameInputContainer.style.display === 'block') {
+        setTimeout(() => playerNameInput.focus(), 10);
+    }
+};
+
+playerNameInput.onkeypress = (e) => {
+    if (e.key === 'Enter') nameConfirmBtn.click();
+};
+
+function executeChoice(choice) {
+    // ?Œë˜ê·??¤ì •
+    if (choice.setFlag) {
+        gameState[choice.setFlag] = true;
+    }
+    if (choice.setFlags && Array.isArray(choice.setFlags)) {
+        choice.setFlags.forEach(flag => {
+            gameState[flag] = true;
+        });
+    }
+    // ?¤íƒ¯ ?…ë°?´íŠ¸ (affinity)
+    if (choice.stats) {
+        for (const [char, stats] of Object.entries(choice.stats)) {
+            if (gameState.stats[char]) {
+                if (stats.affinity) {
+                    gameState.stats[char].affinity = Math.max(-100, Math.min(100, gameState.stats[char].affinity + stats.affinity));
+                    showAffinityChange(stats.affinity, char);
+                }
+            }
+        }
+    }
+
+    let nextScene = choice.next;
+
+    // ?¸ê°?„ì— ?°ë¥¸ ê²°ê³¼ ë¶„ê¸° ì²˜ë¦¬
+    if (choice.affinityBranches && choice.affinityChar && gameState.stats[choice.affinityChar]) {
+        const currentAff = gameState.stats[choice.affinityChar].affinity;
+        // ?’ì? ë¬¸í„±ë¶€??ì²´í¬?˜ì—¬ ì¡°ê±´??ë§ëŠ” ê°€???’ì? ë¶„ê¸°ë¥?? íƒ
+        const sortedBranches = [...choice.affinityBranches].sort((a, b) => b.minAffinity - a.minAffinity);
+        for (const branch of sortedBranches) {
+            if (currentAff >= branch.minAffinity) {
+                nextScene = branch.next;
+                break;
+            }
+        }
+    }
+
+    if (nextScene === 'index.html') {
+        location.href = 'index.html';
+    } else {
+        renderScene(nextScene);
+    }
+}
+
+function checkChoices() {
+    const scene = getScene(currentSceneId);
+    if (scene.choices) {
+        choiceContainer.innerHTML = "";
+
+        // ? íƒì§€ ë³µì‚¬ ë°??„í„°ë§?
+        let availableChoices = scene.choices.filter(choice => {
+            if (choice.condition && !gameState[choice.condition]) return false;
+            if (choice.excludeCondition && gameState[choice.excludeCondition]) return false;
+            return true;
+        });
+
+        // ? íƒì§€ ë¬´ì‘???”í”Œ (?œì´???ìŠ¹)
+        availableChoices.sort(() => Math.random() - 0.5);
+
+        availableChoices.forEach(choice => {
+            const btn = document.createElement('button');
+            btn.className = 'choice-btn';
+            btn.textContent = choice.text.replace(/{name}/g, gameState.playerName);
+            btn.onclick = () => executeChoice(choice);
+            choiceContainer.appendChild(btn);
+        });
+        choiceContainer.style.display = 'flex';
+    }
+}
+
+dialogueBox.onclick = async () => {
+    // ?€?´í•‘ ì¤‘ì—???€?´í•‘ ?¤í‚µ
+    if (isTyping) {
+        skipTyping = true;
+        return;
+    }
+
+    const scene = getScene(currentSceneId);
+    console.log('[DialogueBox Click] currentSceneId:', currentSceneId, 'scene.type:', scene?.type, 'isFreeTalking:', isFreeTalking);
+    
+    // ?„ë¦¬??ì¢…ë£Œ ???´ë¦­ ???¤ìŒ ?¥ë©´?¼ë¡œ ì§„í–‰ (?„ë¦¬???€?…ì´ì§€ë§?isFreeTalking??false??ê²½ìš°)
+    if (scene?.type === 'free_talk' && !isFreeTalking) {
+        const nextId = resolveNextScene(scene);
+        console.log('[FreeTalk Ended] Proceeding to next scene:', nextId);
+        if (nextId) {
+            await renderScene(nextId);
+        }
+        return;
+    }
+    
+    if (isFreeTalking || scene.type === 'input') return;
+
+    // ?œë„¤ë§ˆí‹± ëª¨ë“œ (?ìŠ¤???†ëŠ” ?¼ìš°???¸ë“œ)?ì„œ???¼ë°˜ ?´ë¦­ ë°©ì? (?ë™ ì§„í–‰ ë¡œì§?ì„œ 1.5ì´???window ë¦¬ìŠ¤?ˆë¡œ ì²˜ë¦¬)
+    if (!scene.text && (!scene.choices || scene.choices.length === 0)) {
+        return;
+    }
+
+    if (scene.choices) {
+        // ? íƒì§€ê°€ ?˜ë‚˜ë¿ì´ê³?ê·??ìŠ¤?¸ê? "?¤ìŒ" ?ëŠ” "Next"??ê²½ìš° ?ë™ ì§„í–‰
+        const availableChoices = scene.choices.filter(choice => {
+            if (choice.condition && !gameState[choice.condition]) return false;
+            if (choice.excludeCondition && gameState[choice.excludeCondition]) return false;
+            return true;
+        });
+
+        if (availableChoices.length === 1 && (availableChoices[0].text === "?¤ìŒ" || availableChoices[0].text === "Next")) {
+            executeChoice(availableChoices[0]);
+            return;
+        }
+
+        dialogueBox.style.display = 'none'; // ?€?”ì°½ ?¨ê¸°ê¸?
+        checkChoices(); // ? íƒì§€ ?œì‹œ
+    } else {
+        const nextId = resolveNextScene(scene);
+        if (nextId) {
+            await renderScene(nextId);
+        } else {
+            // ?¤ìŒ ?¥ë©´???†ê³  ? íƒì§€???†ëŠ” ê²½ìš° (ê²Œì„ ì¢…ë£Œ)
+            location.href = 'index.html';
+        }
+    }
+};
+
+// ì´ˆê¸° ?¤í–‰ ?œì–´ (index.html?ì„œ startGame ?¸ì¶œ ???¤í–‰?˜ë„ë¡?ë³€ê²?ê°€??
+if (!window.preventAutoStart) {
+    window.addEventListener('DOMContentLoaded', async () => {
+        soundManager.init();
+        await renderScene("start");
+    });
+}
+
+// ëª…ì‹œ??ê²Œì„ ?œì‘ ?¨ìˆ˜
+window.initGame = async () => {
+    soundManager.init();
+    // ??ê²Œì„ ?œì‘ ???€???°ì´???? œ
+    if (window.clearSavedGame) {
+        window.clearSavedGame();
+    }
+    await renderScene("start");
+};
+
+// ?€?¥ëœ ê²Œì„?ì„œ ?œì‘?˜ëŠ” ?¨ìˆ˜
+window.initGameFromSave = async (saveData) => {
+    soundManager.init();
+    
+    // ?€?¥ëœ ?íƒœ ë³µì›
+    if (saveData.gameState) {
+        // gameState ë³µì›
+        Object.assign(gameState, saveData.gameState);
+    }
+    
+    // ?„ì¬ ??ID ë³µì›
+    if (saveData.currentSceneId) {
+        currentSceneId = saveData.currentSceneId;
+    }
+    
+    // ë§ˆì?ë§?ë°°ê²½ URL ë³µì›
+    if (saveData.lastBgUrl) {
+        lastBgUrl = saveData.lastBgUrl;
+    }
+    
+    // ë°°ê²½ ?´ë?ì§€ ì§ì ‘ ?¤ì • (renderScene ?„ì— ë¯¸ë¦¬ ?¤ì •)
+    if (saveData.lastBgUrl) {
+        const bgLayer = document.getElementById('background-layer');
+        if (bgLayer) {
+            bgLayer.style.backgroundImage = `url(${saveData.lastBgUrl})`;
+        }
+    }
+    
+    // ìºë¦­???´ë?ì§€ ë³µì›
+    if (saveData.currentCharacters) {
+        const charSlots = {
+            left: document.getElementById('char-left'),
+            center: document.getElementById('char-center'),
+            right: document.getElementById('char-right')
+        };
+        for (const [slot, src] of Object.entries(saveData.currentCharacters)) {
+            if (charSlots[slot] && src) {
+                charSlots[slot].innerHTML = `<img src="${src}" alt="character">`;
+            }
+        }
+    }
+    
+    console.log('[Load] ê²Œì„ ?íƒœ ë³µì› ?„ë£Œ:', currentSceneId, gameState);
+    
+    // ?€?¥ëœ ?¬ë????Œë”ë§?
+    await renderScene(currentSceneId);
+};

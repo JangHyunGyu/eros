@@ -1,0 +1,19 @@
+{
+    "name": "Eros: 무료 ??미연??,
+    "short_name": "Eros",
+    "description": "?�치 ?�이 즐기??무료 ??미연??게임. ?�원 로맨??비주???�벨??주인공이 ?�어보세??",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#1a1a2e",
+    "theme_color": "#e94560",
+    "orientation": "portrait",
+    "lang": "ko",
+    "icons": [
+        {
+            "src": "favicon.ico",
+            "sizes": "48x48",
+            "type": "image/x-icon"
+        }
+    ],
+    "categories": ["games", "entertainment"]
+}

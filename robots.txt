@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /game.html
+
+Sitemap: https://eros.archerlab.dev/sitemap.xml
