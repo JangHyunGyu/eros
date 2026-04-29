@@ -1,0 +1,27 @@
+# Eros: Free Web Visual Novel
+> Browser-based school romance visual novel and dating simulation game, playable without installation.
+
+## About
+Eros is a free web visual novel game from ArcherLab. It is a school romance dating simulation built for the browser, with Korean and English pages, character routes, story choices, and gallery-style visual novel presentation.
+
+## Features
+- Browser-based visual novel, no install required
+- School romance and dating simulation structure
+- Korean and English support
+- Story choices and character-focused scenes
+- Mobile and desktop browser support
+- Free to play
+
+## Links
+- Play now: https://eros.archerlab.dev/
+- English: https://eros.archerlab.dev/index-en.html
+- Gallery: https://eros.archerlab.dev/gallery.html
+- Sitemap: https://eros.archerlab.dev/sitemap.xml
+- Developer: https://archerlab.dev
+
+## Languages
+- Korean (한국어)
+- English
+
+## Category
+Visual Novel, Dating Simulation, Romance Game, Browser Game
